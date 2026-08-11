@@ -187,6 +187,19 @@ def _any4hdmi_manifest_override_view(
     view_root = base_dir / ".cache" / "motion" / "manifest_overrides" / key
     view_root.mkdir(parents=True, exist_ok=True)
 
+    if resolved_mjcf.is_symlink():
+        mjcf_view_dir = view_root / "mjcf"
+        mjcf_view_dir.mkdir(parents=True, exist_ok=True)
+        mjcf_view_path = mjcf_view_dir / resolved_mjcf.name
+        shutil.copy2(resolved_mjcf, mjcf_view_path, follow_symlinks=True)
+        for source_asset in resolved_mjcf.parent.iterdir():
+            if source_asset.name == resolved_mjcf.name:
+                continue
+            target_asset = mjcf_view_dir / source_asset.name
+            if not target_asset.exists() and not target_asset.is_symlink():
+                target_asset.symlink_to(source_asset, target_is_directory=source_asset.is_dir())
+        manifest["mjcf"] = str(mjcf_view_path)
+
     view_manifest_path = view_root / "manifest.json"
     next_manifest_text = json.dumps(manifest, indent=2, sort_keys=False) + "\n"
     if (

@@ -38,6 +38,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Tutorials',
       items: [
+        'tutorials/whole-body-teleoperation-guide',
         'tutorials/offline-motion-tracking',
         'tutorials/pico-teleoperation',
         'tutorials/motion-recording',

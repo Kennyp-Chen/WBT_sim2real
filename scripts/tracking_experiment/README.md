@@ -77,6 +77,39 @@ uv run python -m sim2real.sim_env.integrated_sim2sim \
 Drop `--headless` to inspect the rollout in the MuJoCo viewer. In viewer mode,
 pressing space after the final-frame hold restarts the motion from frame 0.
 
+## Record Policy Videos
+
+The integrated runner can stream deterministic offscreen frames directly to an
+H.264 MP4. Video frames are sampled by simulated time, so playback speed does
+not depend on policy inference speed:
+
+```bash
+MUJOCO_GL=egl uv run python -m sim2real.sim_env.integrated_sim2sim \
+  --robot g1 \
+  --policy-config checkpoints/mimic-lite/32x8192-huge/policy.yaml \
+  --motion-path .cache/motion/datasets/lafan40/motions/jumps1_subject1.npz \
+  --headless \
+  --initial-pause-s 0 \
+  --max-runtime-s 15 \
+  --video-output outputs/policy_videos/mimic_lite/jumps1_subject1.mp4
+```
+
+Use the batch runner to record all configured policies against the jump and
+fall-and-get-up motions. Existing videos are skipped unless `--overwrite` is
+passed:
+
+```bash
+uv run python scripts/tracking_experiment/record_policy_videos.py \
+  --duration-s 15 \
+  --fps 30 \
+  --width 1280 \
+  --height 720 \
+  --continue-on-error
+```
+
+Repeat `--policy NAME` or `--motion FILE` to run a subset. See `--help` for the
+available options and policy names.
+
 ## Run Batched Tracking Metrics
 
 Evaluate one or more policies over a motion directory:

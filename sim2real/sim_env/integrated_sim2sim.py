@@ -89,6 +89,86 @@ def _copy_array(value: Any, dtype: Any | None = np.float32) -> np.ndarray:
     return np.asarray(value, dtype=dtype).copy()
 
 
+class OffscreenVideoRecorder:
+    def __init__(
+        self,
+        *,
+        model: mujoco.MjModel,
+        data: mujoco.MjData,
+        output_path: str,
+        fps: float,
+        width: int,
+        height: int,
+        track_body_id: int,
+        camera_distance: float,
+        camera_azimuth: float,
+        camera_elevation: float,
+        duration_s: float | None,
+    ) -> None:
+        import imageio_ffmpeg
+
+        self.data = data
+        self.output_path = Path(output_path).expanduser()
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fps = float(fps)
+        self.frame_period_s = 1.0 / self.fps
+        self.duration_s = duration_s
+        self.next_frame_time_s = 0.0
+        self.frame_count = 0
+        model.vis.global_.offwidth = max(int(model.vis.global_.offwidth), int(width))
+        model.vis.global_.offheight = max(int(model.vis.global_.offheight), int(height))
+        self.renderer = mujoco.Renderer(model, height=height, width=width)
+        self.camera = mujoco.MjvCamera()
+        mujoco.mjv_defaultCamera(self.camera)
+        self.camera.type = mujoco.mjtCamera.mjCAMERA_TRACKING
+        self.camera.trackbodyid = int(track_body_id)
+        self.camera.distance = float(camera_distance)
+        self.camera.azimuth = float(camera_azimuth)
+        self.camera.elevation = float(camera_elevation)
+        self.writer = imageio_ffmpeg.write_frames(
+            str(self.output_path),
+            (int(width), int(height)),
+            fps=self.fps,
+            codec="libx264",
+            pix_fmt_in="rgb24",
+            pix_fmt_out="yuv420p",
+            macro_block_size=1,
+            output_params=["-movflags", "+faststart"],
+        )
+        self.writer.send(None)
+        self.closed = False
+
+    def capture_due_frames(self, sim_elapsed_s: float) -> None:
+        epsilon = 1.0e-9
+        while self.next_frame_time_s <= sim_elapsed_s + epsilon:
+            if (
+                self.duration_s is not None
+                and self.next_frame_time_s >= self.duration_s - epsilon
+            ):
+                break
+            self.renderer.update_scene(self.data, camera=self.camera)
+            frame = np.asarray(self.renderer.render(), dtype=np.uint8)
+            self.writer.send(np.ascontiguousarray(frame))
+            self.frame_count += 1
+            self.next_frame_time_s = self.frame_count * self.frame_period_s
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.writer.close()
+        finally:
+            self.renderer.close()
+        logger.info(
+            "Saved {} video frames ({:.2f}s at {:.2f} FPS) to {}",
+            self.frame_count,
+            self.frame_count / self.fps,
+            self.fps,
+            self.output_path,
+        )
+
+
 def _prepare_integrated_policy_config(
     policy_config: dict[str, Any],
     *,
@@ -913,6 +993,7 @@ class IntegratedSim2Sim:
             headless=args.headless,
             key_callback=self._on_mujoco_key if not args.headless else None,
         )
+        self.video_recorder = self._create_video_recorder()
         self.root_trajectory: list[dict[str, np.ndarray | float | int]] = []
         self.trajectory: list[dict[str, np.ndarray | float | int]] = []
         self._trajectory_body_names: list[str] | None = None
@@ -927,6 +1008,23 @@ class IntegratedSim2Sim:
         self._tracking_failure_detected = False
         self._tracking_failure_reason: str | None = None
         self._reset_playback()
+
+    def _create_video_recorder(self) -> OffscreenVideoRecorder | None:
+        if self.args.video_output is None:
+            return None
+        return OffscreenVideoRecorder(
+            model=self.sim.mj_model,
+            data=self.sim.mj_data,
+            output_path=self.args.video_output,
+            fps=self.args.video_fps,
+            width=self.args.video_width,
+            height=self.args.video_height,
+            track_body_id=self.sim.pelvis_body_id,
+            camera_distance=self.args.video_camera_distance,
+            camera_azimuth=self.args.video_camera_azimuth,
+            camera_elevation=self.args.video_camera_elevation,
+            duration_s=self.args.max_runtime_s,
+        )
 
     def _on_mujoco_key(self, key: int) -> None:
         if glfw is not None and key == glfw.KEY_SPACE:
@@ -1410,6 +1508,9 @@ class IntegratedSim2Sim:
         tick_dt = float(self.args.env_dt)
         run_start_time = time.perf_counter()
 
+        if self.video_recorder is not None:
+            self.video_recorder.capture_due_frames(0.0)
+
         try:
             while self.sim.is_running():
                 tick_start_time = time.perf_counter()
@@ -1444,6 +1545,8 @@ class IntegratedSim2Sim:
                     sim_count += 1
                     self.headless_elapsed_s = sim_count * self.args.sim_dt
                     self._append_trajectory_frame()
+                    if self.video_recorder is not None:
+                        self.video_recorder.capture_due_frames(self.headless_elapsed_s)
                     if self.args.stop_on_tracking_failure and self._tracking_failure_detected:
                         break
 
@@ -1468,6 +1571,8 @@ class IntegratedSim2Sim:
             self._save_root_trajectory()
             self._save_trajectory()
             self.policy.save_recording()
+            if self.video_recorder is not None:
+                self.video_recorder.close()
             self.sim.stop()
 
 
@@ -1484,6 +1589,13 @@ class IntegratedSim2SimArgs:
     profile_obs: bool = False
     run_once: bool = False
     max_runtime_s: float | None = None
+    video_output: str | None = None
+    video_fps: float = 30.0
+    video_width: int = 1280
+    video_height: int = 720
+    video_camera_distance: float = 3.0
+    video_camera_azimuth: float = 120.0
+    video_camera_elevation: float = -20.0
     record: bool = False
     record_output: str | None = None
     root_trajectory_output: str | None = None
@@ -1498,6 +1610,18 @@ class IntegratedSim2SimArgs:
             raise ValueError(f"env_dt must be positive, got {self.env_dt}")
         if self.sim_dt <= 0:
             raise ValueError(f"sim_dt must be positive, got {self.sim_dt}")
+        if self.video_fps <= 0:
+            raise ValueError(f"video_fps must be positive, got {self.video_fps}")
+        if self.video_width <= 0 or self.video_height <= 0:
+            raise ValueError(
+                "video dimensions must be positive, got "
+                f"{self.video_width}x{self.video_height}"
+            )
+        if self.video_width % 2 or self.video_height % 2:
+            raise ValueError(
+                "video dimensions must be even for yuv420p output, got "
+                f"{self.video_width}x{self.video_height}"
+            )
 
         sim_steps = float(self.env_dt) / float(self.sim_dt)
         rounded_sim_steps = int(round(sim_steps))
@@ -1515,6 +1639,8 @@ class IntegratedSim2SimArgs:
 
         self.policy_config = str(Path(self.policy_config).expanduser())
         self.motion_path = _expand_local_path_arg(self.motion_path)
+        if self.video_output is not None:
+            self.video_output = str(Path(self.video_output).expanduser())
         if self.root_trajectory_output is not None:
             self.root_trajectory_output = str(Path(self.root_trajectory_output).expanduser())
         if self.trajectory_output is not None:
