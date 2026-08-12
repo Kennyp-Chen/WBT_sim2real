@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 DEFAULT_POLICIES = {
     "mimic_lite": "checkpoints/mimic-lite/32x8192-huge/policy.yaml",
     "bfm_zero": "checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml",
+    "bfm_zero_piplus": "checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml",
     "scalebfm_m": "checkpoints/scalebfm/humanoid_transformer_m/policy.yaml",
     "scalebfm_xl": "checkpoints/scalebfm/humanoid_transformer_xl/policy.yaml",
     "sonic_release": "checkpoints/sonic/release/g1/policy.yaml",
@@ -39,6 +39,11 @@ def _parse_args() -> argparse.Namespace:
         help="Policy name to record; repeat as needed. Defaults to all policies.",
     )
     parser.add_argument(
+        "--robot",
+        default="g1",
+        help="Robot configuration passed to integrated_sim2sim (default: g1).",
+    )
+    parser.add_argument(
         "--motion",
         action="append",
         default=[],
@@ -60,9 +65,15 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _selected_policies(names: list[str]) -> dict[str, str]:
+def _selected_policies(names: list[str], robot: str) -> dict[str, str]:
     if not names:
-        return dict(DEFAULT_POLICIES)
+        if robot == "piplus_h0w":
+            return {"bfm_zero_piplus": DEFAULT_POLICIES["bfm_zero_piplus"]}
+        return {
+            name: path
+            for name, path in DEFAULT_POLICIES.items()
+            if name != "bfm_zero_piplus"
+        }
     unknown = sorted(set(names) - set(DEFAULT_POLICIES))
     if unknown:
         choices = ", ".join(DEFAULT_POLICIES)
@@ -92,7 +103,7 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     output_dir = Path(args.output_dir).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
-    policies = _selected_policies(args.policy)
+    policies = _selected_policies(args.policy, args.robot)
     motions = _motion_paths(
         args.motion,
         (repo_root / args.motions_root).resolve(),
@@ -124,7 +135,7 @@ def main() -> None:
                 sys.executable,
                 str(repo_root / "sim2real/sim_env/integrated_sim2sim.py"),
                 "--robot",
-                "g1",
+                args.robot,
                 "--policy-config",
                 str(policy_path),
                 "--motion-path",

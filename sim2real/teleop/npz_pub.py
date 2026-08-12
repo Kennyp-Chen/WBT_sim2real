@@ -8,19 +8,18 @@ normal stream published by pico_retarget_pub.py.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import json
-from pathlib import Path
 import threading
 import time
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 
-from any4hdmi.utils.mjcf import resolve_mjcf_path
-import torch
 import mujoco
 import numpy as np
 import tyro
 import zmq
+from any4hdmi.utils.mjcf import resolve_mjcf_path
 
 from sim2real.config.robots import get_robot_cfg
 from sim2real.config.robots.base import (
@@ -36,7 +35,6 @@ from sim2real.config.robots.base import (
 from sim2real.rl_policy.utils.motion import MotionDataset, motion_dataset_first_motion
 from sim2real.utils.math import yaw_quat
 from sim2real.utils.profiling import ScopedTimer
-
 
 SEND_TIMER_NAME = "npz_pub.send_payload"
 SAMPLE_TIMER_NAME = "npz_pub.sample_motion"
@@ -131,16 +129,26 @@ class NpzMotionPublisher:
         self.frame = int(args.start_frame)
         self.frame = min(max(self.frame, 0), self.motion_length - 1)
         self.seq = 0
-        self.state = (
-            PlaybackState.MOTION_PAUSED
-            if str(args.initial_source).lower() == "motion"
-            else PlaybackState.DEFAULT
-        )
+        initial_source = str(args.initial_source).lower()
+        if initial_source == "motion" and bool(getattr(args, "start_playing", False)):
+            self.state = PlaybackState.MOTION_PLAYING
+        elif initial_source == "motion":
+            self.state = PlaybackState.MOTION_PAUSED
+        else:
+            self.state = PlaybackState.DEFAULT
         self._segment_first_frame = True
         self._stop_after_terminal_payload = False
         self.motion_joint_indices = self._resolve_motion_joint_indices()
         self.motion_body_indices = self._resolve_motion_body_indices()
-        self.root_body_index = self.publish_body_names.index("pelvis")
+        root_body_name = str(getattr(args, "root_body_name", "") or "").strip()
+        if not root_body_name:
+            root_body_name = "pelvis" if "pelvis" in self.publish_body_names else "base_link"
+        if root_body_name not in self.publish_body_names:
+            raise ValueError(
+                f"Motion root body {root_body_name!r} is not present in published bodies: "
+                f"{self.publish_body_names}"
+            )
+        self.root_body_index = self.publish_body_names.index(root_body_name)
 
         self.model = mujoco.MjModel.from_xml_path(str(self.mjcf_path))
         self.joint_qpos_indices = self._resolve_joint_qpos_indices()
@@ -396,9 +404,17 @@ class PublisherArgs:
     mjcf_path: str | None = None
     initial_source: str = "default"
     keyboard: bool = True
+    start_playing: bool = False
+    root_body_name: str | None = None
 
 
-def run_publish(args: PublisherArgs) -> None:
+def run_publish(
+    args: PublisherArgs,
+    *,
+    stop_event: threading.Event | None = None,
+    play_event: threading.Event | None = None,
+    ready_event: threading.Event | None = None,
+) -> None:
     worker = NpzMotionPublisher(args)
 
     ctx = zmq.Context.instance()
@@ -422,10 +438,18 @@ def run_publish(args: PublisherArgs) -> None:
         )
     if args.startup_sleep_s > 0:
         time.sleep(float(args.startup_sleep_s))
+    if ready_event is not None:
+        ready_event.set()
 
     try:
         next_tick = time.perf_counter()
-        while True:
+        play_started = play_event is None
+        while stop_event is None or not stop_event.is_set():
+            if not play_started and play_event is not None and play_event.is_set():
+                worker.state = PlaybackState.MOTION_PLAYING
+                worker._stop_after_terminal_payload = False
+                worker._mark_segment_boundary()
+                play_started = True
             payload = worker.sample_payload()
             with ScopedTimer(SEND_TIMER_NAME):
                 sock.send_string(

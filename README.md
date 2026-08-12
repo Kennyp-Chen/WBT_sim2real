@@ -37,6 +37,128 @@ uv run sim2real/rl_policy/tracking.py --robot g1 \
 
 After both processes are up, press `]` in the policy terminal to start. Open the mjviser URL printed by `base_sim.py`, then use the Elastic Band controls in the viewer UI to disable or tune the virtual gantry.
 
+## PiPlus 22-DoF BFM-Zero
+
+PiPlus runtime artifacts are not stored in git. Provide:
+
+- The complete robot asset directory, including `xml/` and the sibling
+  `meshes/` directory referenced by the MJCF.
+- `policy.yaml` and the merged `policy.onnx` under the same checkpoint
+  directory.
+- A 50 Hz any4hdmi motion NPZ containing `qpos[T, 29]`.
+
+Set the paths once per shell. `SIM2REAL_PIPLUS_MJCF` must point to the XML
+inside the complete asset tree, not to an XML copied without its meshes.
+
+```bash
+export SIM2REAL_PIPLUS_MJCF=/absolute/path/to/PiPlus_S_12L8A0G2H0W/xml/PiPlus_S_12L8A0G2H0W_with_armature.xml
+export PIPLUS_POLICY=checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml
+export PIPLUS_MOTION=/absolute/path/to/any4hdmi_full/motions/dance2_subject2.npz
+```
+
+### Convert and merge artifacts
+
+Convert the HumanoidVerse LAFAN pickle to 50 Hz any4hdmi motions:
+
+```bash
+uv run python scripts/convert_piplus_lafan_pkl_to_any4hdmi.py \
+  --source /absolute/path/to/piplus_h0w_lafan_combined.pkl \
+  --output /absolute/path/to/any4hdmi_full \
+  --mjcf "$SIM2REAL_PIPLUS_MJCF" \
+  --target-fps 50
+```
+
+Merge the decoder/actor and backward encoder into the single semantic-input
+ONNX consumed by sim2real:
+
+```bash
+uv run --with onnx python scripts/merge_bfm_zero_piplus_onnx.py \
+  --actor /absolute/path/to/exported/FBcprAuxModel.onnx \
+  --encoder /absolute/path/to/exported/FBcprAuxModel_z_encoder.onnx \
+  --output checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.onnx
+```
+
+### Record offline sim2sim
+
+Record a deterministic policy-only video with the general batch recorder:
+
+```bash
+uv run python scripts/tracking_experiment/record_policy_videos.py \
+  --policy bfm_zero_piplus \
+  --robot piplus_h0w \
+  --motion "$PIPLUS_MOTION" \
+  --duration-s 60 \
+  --output-dir outputs/policy_videos
+```
+
+To put the source qpos replay beside an existing policy video without ZMQ:
+
+```bash
+uv run python scripts/tracking_experiment/make_motion_policy_side_by_side.py \
+  --robot piplus_h0w \
+  --motion-path "$PIPLUS_MOTION" \
+  --policy-video outputs/policy_videos/bfm_zero_piplus/MOTION_NAME.mp4 \
+  --output outputs/policy_videos/bfm_zero_piplus/MOTION_NAME_side_by_side.mp4 \
+  --duration-s 60
+```
+
+### Run the real-time ZMQ path
+
+Use three terminals. Start the simulator first:
+
+```bash
+uv run python sim2real/sim_env/base_sim.py \
+  --robot piplus_h0w \
+  --sim-dt 0.005
+```
+
+Start the policy in the second terminal, then press `]` to enter policy mode:
+
+```bash
+uv run python sim2real/rl_policy/tracking.py \
+  --robot piplus_h0w \
+  --policy-config "$PIPLUS_POLICY" \
+  --robot-io zmq \
+  --controller keyboard \
+  --motion-backend zmq \
+  --motion-zmq-connect tcp://127.0.0.1:28701 \
+  --motion-tolerance-s 0.04 \
+  --rl-rate 50
+```
+
+Start the motion publisher in the third terminal. Press `space` to play or
+pause; `]` resets to frame zero and pauses.
+
+```bash
+uv run python sim2real/teleop/npz_pub.py \
+  --robot piplus_h0w \
+  --motion-path "$PIPLUS_MOTION" \
+  --initial-source motion \
+  --root-body-name base_link \
+  --publish-hz 50 \
+  --bind 'tcp://*:28701'
+```
+
+For a self-contained synchronized recording of the same ZMQ path, use the
+command below. It starts its own publisher, policy, and MuJoCo bridge; do not
+run it at the same time as the three interactive terminals above on port
+28701.
+
+```bash
+uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
+  --robot piplus_h0w \
+  --policy-config "$PIPLUS_POLICY" \
+  --motion-path "$PIPLUS_MOTION" \
+  --output outputs/policy_videos/bfm_zero_piplus/zmq_side_by_side_sync.mp4 \
+  --duration-s 60 \
+  --fps 30
+```
+
+The recorder runs motion and policy at 50 Hz, MuJoCo physics at 200 Hz, and
+encodes at 30 FPS. Its left panel follows the frame actually emitted by the
+ZMQ publisher, while the right panel shows the policy-driven simulation. The
+final log reports nominal duration, wall duration, and recorder clock drift.
+
 ## Migrating to sim2real
 
 This repo includes a Codex skill for adapting policies trained in external codebases into `sim2real`:
@@ -55,6 +177,7 @@ Currently supported adapted / distributed checkpoint families:
 | --- | --- | --- |
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints. |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker. |
+| BFM-Zero PiPlus 22-DoF | `checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml` | PiPlus decoder and backward encoder merged into one semantic-input ONNX. |
 | ScaleBFM | `checkpoints/scalebfm` | ScaleBFM Humanoid Transformer M and XL ONNX exports from [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM). |
 | SONIC release | `checkpoints/sonic/release` | Release G1 and SMPL encoder variants. |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 and SMPL variants. |

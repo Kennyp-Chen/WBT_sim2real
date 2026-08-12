@@ -36,6 +36,122 @@ uv run sim2real/rl_policy/tracking.py \
 
 两个进程都启动后，在 policy 终端按 `]` 开始跟踪，然后打开 `base_sim.py` 打印出来的 mjviser URL。虚拟 gantry / elastic band 的开关和长度在 viewer UI 里调。
 
+## PiPlus 22-DoF BFM-Zero
+
+PiPlus 的运行产物不放在 git 中，需要准备：
+
+- 完整机器人资产目录，包括 `xml/` 和 MJCF 引用的同级 `meshes/` 目录。
+- 位于同一 checkpoint 目录下的 `policy.yaml` 和合并后的 `policy.onnx`。
+- 50 Hz any4hdmi 动作 NPZ，其中包含 `qpos[T, 29]`。
+
+每个 shell 先设置以下路径。`SIM2REAL_PIPLUS_MJCF` 必须指向完整资产目录中的
+XML，不能使用脱离配套 meshes 单独复制出来的 XML。
+
+```bash
+export SIM2REAL_PIPLUS_MJCF=/absolute/path/to/PiPlus_S_12L8A0G2H0W/xml/PiPlus_S_12L8A0G2H0W_with_armature.xml
+export PIPLUS_POLICY=checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml
+export PIPLUS_MOTION=/absolute/path/to/any4hdmi_full/motions/dance2_subject2.npz
+```
+
+### 转换和合并运行产物
+
+把 HumanoidVerse LAFAN pickle 转成 50 Hz any4hdmi motions：
+
+```bash
+uv run python scripts/convert_piplus_lafan_pkl_to_any4hdmi.py \
+  --source /absolute/path/to/piplus_h0w_lafan_combined.pkl \
+  --output /absolute/path/to/any4hdmi_full \
+  --mjcf "$SIM2REAL_PIPLUS_MJCF" \
+  --target-fps 50
+```
+
+把 decoder/actor 和 backward encoder 合并成 sim2real 使用的单个语义输入 ONNX：
+
+```bash
+uv run --with onnx python scripts/merge_bfm_zero_piplus_onnx.py \
+  --actor /absolute/path/to/exported/FBcprAuxModel.onnx \
+  --encoder /absolute/path/to/exported/FBcprAuxModel_z_encoder.onnx \
+  --output checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.onnx
+```
+
+### 录制离线 sim2sim
+
+使用通用批量录像脚本录制确定性的 policy 单侧视频：
+
+```bash
+uv run python scripts/tracking_experiment/record_policy_videos.py \
+  --policy bfm_zero_piplus \
+  --robot piplus_h0w \
+  --motion "$PIPLUS_MOTION" \
+  --duration-s 60 \
+  --output-dir outputs/policy_videos
+```
+
+不经过 ZMQ，把动作 qpos 播放放在已有 policy 视频左侧：
+
+```bash
+uv run python scripts/tracking_experiment/make_motion_policy_side_by_side.py \
+  --robot piplus_h0w \
+  --motion-path "$PIPLUS_MOTION" \
+  --policy-video outputs/policy_videos/bfm_zero_piplus/MOTION_NAME.mp4 \
+  --output outputs/policy_videos/bfm_zero_piplus/MOTION_NAME_side_by_side.mp4 \
+  --duration-s 60
+```
+
+### 运行实时 ZMQ 路径
+
+使用三个终端。第一个终端启动仿真器：
+
+```bash
+uv run python sim2real/sim_env/base_sim.py \
+  --robot piplus_h0w \
+  --sim-dt 0.005
+```
+
+第二个终端启动 policy，然后按 `]` 进入 policy 模式：
+
+```bash
+uv run python sim2real/rl_policy/tracking.py \
+  --robot piplus_h0w \
+  --policy-config "$PIPLUS_POLICY" \
+  --robot-io zmq \
+  --controller keyboard \
+  --motion-backend zmq \
+  --motion-zmq-connect tcp://127.0.0.1:28701 \
+  --motion-tolerance-s 0.04 \
+  --rl-rate 50
+```
+
+第三个终端启动动作 publisher。按 `space` 播放或暂停；按 `]` 回到第 0 帧并暂停。
+
+```bash
+uv run python sim2real/teleop/npz_pub.py \
+  --robot piplus_h0w \
+  --motion-path "$PIPLUS_MOTION" \
+  --initial-source motion \
+  --root-body-name base_link \
+  --publish-hz 50 \
+  --bind 'tcp://*:28701'
+```
+
+如果要录制同一条 ZMQ 路径的同步动作/policy 左右对比视频，请使用下面的
+自包含录像器。它会自己启动 publisher、policy 和 MuJoCo bridge；不要和上面的
+三个交互式终端同时运行同一个 28701 端口。
+
+```bash
+uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
+  --robot piplus_h0w \
+  --policy-config "$PIPLUS_POLICY" \
+  --motion-path "$PIPLUS_MOTION" \
+  --output outputs/policy_videos/bfm_zero_piplus/zmq_side_by_side_sync.mp4 \
+  --duration-s 60 \
+  --fps 30
+```
+
+录像器使用 50 Hz motion、50 Hz policy、200 Hz MuJoCo physics，并以 30 FPS
+编码。左侧跟随 ZMQ publisher 实际发出的 frame，右侧显示 policy 驱动的仿真。
+结束日志会报告名义时长、实际墙上时长和录像时钟漂移。
+
 ## Migrating to sim2real
 
 这个 repo 内置了一个 Codex skill，用来把外部训练 codebase 里的 policy 适配到 `sim2real`：
@@ -54,6 +170,7 @@ uv run sim2real/rl_policy/tracking.py \
 | --- | --- | --- |
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints。 |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker。 |
+| BFM-Zero PiPlus 22-DoF | `checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml` | 将 PiPlus decoder 和 backward encoder 合并为一个语义输入 ONNX。 |
 | ScaleBFM | `checkpoints/scalebfm` | [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM) 的 Humanoid Transformer M 和 XL ONNX exports。 |
 | SONIC release | `checkpoints/sonic/release` | Release G1 和 SMPL encoder variants。 |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 和 SMPL variants。 |

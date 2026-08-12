@@ -13,6 +13,7 @@ from sim2real.config.robots import get_robot_cfg
 from sim2real.rl_policy.controllers.base import ControllerBase
 from sim2real.rl_policy.controllers.keyboard import KeyboardController
 from sim2real.rl_policy.controllers.pico import PicoController
+from sim2real.rl_policy.controllers.passive import PassiveController
 from sim2real.rl_policy.controllers.unitree_joystick import UnitreeJoystickController
 from sim2real.rl_policy.inference import Timer, build_inference_module
 from sim2real.rl_policy.observations import Observation, ObsGroup, normalize_observation_array
@@ -202,6 +203,9 @@ class BasePolicy:
         if controller_type == "pico":
             self.pico_controller = PicoController(connect=self.args.pico_zmq_connect)
             return self.pico_controller
+
+        if controller_type == "passive":
+            return PassiveController()
 
         raise ValueError(f"Unsupported controller_type: {controller_type}")
 
@@ -637,7 +641,7 @@ class BasePolicyArgs:
     inference_backend: Literal["onnx-gpu", "onnx-cpu", "tensorrt"] = "onnx-cpu"
     robot_io: Literal["inline", "zmq"] = "zmq"
     robot_interface: str = "eth0"
-    controller: Literal["keyboard", "joystick", "pico"] = "keyboard"
+    controller: Literal["keyboard", "joystick", "pico", "passive"] = "keyboard"
     pico_zmq_connect: str = f"tcp://127.0.0.1:{PORTS['pico_controller']}"
     record: bool = False
     record_output: str | None = None
