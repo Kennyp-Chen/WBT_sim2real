@@ -4,6 +4,7 @@ from .heft import *
 from .holomotion import *
 from .bfm_zero import *
 from .bfm_zero_piplus import *
+from .bfm_zero_ht import *
 from .common import *
 from .humanoid_gpt import *
 from .motion import *
