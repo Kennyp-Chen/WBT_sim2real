@@ -1,0 +1,7 @@
+interface:
+  display_name: "Integrate BFM-Zero Robot"
+  short_description: "Add and validate a new BFM-Zero robot"
+  default_prompt: "Use $integrate-bfmzero-robot to add and validate a new BFM-Zero robot in sim2real."
+
+policy:
+  allow_implicit_invocation: true

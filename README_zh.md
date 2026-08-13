@@ -152,6 +152,9 @@ uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
 编码。左侧跟随 ZMQ publisher 实际发出的 frame，右侧显示 policy 驱动的仿真。
 结束日志会报告名义时长、实际墙上时长和录像时钟漂移。
 
+真实 PiPlus 部署请使用 ROS2 到 ZMQ 的 bridge；状态、关节映射和安全启动步骤见
+[PiPlus BFM-Zero sim2real 指南](docs/piplus_bfmzero_sim2real.md)。
+
 ## Migrating to sim2real
 
 这个 repo 内置了一个 Codex skill，用来把外部训练 codebase 里的 policy 适配到 `sim2real`：

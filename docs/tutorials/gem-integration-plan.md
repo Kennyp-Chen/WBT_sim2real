@@ -1,0 +1,332 @@
+---
+title: GEM Integration Plan
+slug: /tutorials/gem-integration-plan
+---
+
+# GEM Integration Plan
+
+This document is the durable execution plan and progress ledger for connecting
+GEM video, language, audio, and music motion to the base policies in this
+repository. Update the status table, evidence links, blockers, and resume point
+whenever work advances.
+
+For the technical background, see
+[GEM Multimodal Motion Front End](/reference/gem-multimodal-motion).
+
+## Project Goal
+
+Deliver one timestamped motion-source interface that can accept:
+
+1. recorded video;
+2. a live camera;
+3. interactive language prompts;
+4. live or recorded music/audio;
+
+and drive, in order of implementation risk:
+
+1. SONIC SMPL on G1;
+2. PiPlus 22-DoF BFM-Zero;
+3. robot hardware after sim2sim validation.
+
+## Progress Ledger
+
+Last updated: 2026-08-12.
+
+| ID | Status | Deliverable | Evidence / current result |
+|---|---|---|---|
+| PRE-001 | Done | SONIC release and low-latency G1/SMPL ONNX integrated | `checkpoints/sonic/{release,low_latency}` |
+| PRE-002 | Done | SONIC SMPL ZMQ contract implemented | `sim2real/teleop/smpl_stream.py`, `SmplRealtimeMotionBuffer` |
+| PRE-003 | Done | Live PICO/XRobot SMPL publisher with GMR wrist references | `sim2real/teleop/pico_retarget_pub.py --publish-smpl` |
+| PRE-004 | Done | PiPlus 22-DoF BFM-Zero merged ONNX and sim2real observations | commit `7a3b2c6` |
+| PRE-005 | Done | PiPlus NPZ/ZMQ playback and synchronized video recording | `record_policy_videos.py`, `record_zmq_policy_videos.py` |
+| GEM-000 | Done | GEM paper/project/runtime investigation | GEM report and local clone at `/home/sunteng/Projects/WBC_Telep/GENMO` |
+| GEM-001 | In progress | Recorded GEM `smpl_params.pt` to SONIC SMPL ZMQ publisher | Adapter implementation started; real GEM artifact and sim2sim run still required |
+| GEM-002 | In progress | Recorded-video GEM inference environment and benchmark | GENMO cloned at `/home/sunteng/Projects/WBC_Telep/GENMO`; all 9 GEM/GVHMR checkpoint files downloaded and hash-verified; only licensed SMPL-X body model remains |
+| GEM-003 | Not started | Full G1 wrist retargeting from GEM SMPL | No GEM-SMPL-to-G1 GMR adapter yet |
+| GEM-004 | Not started | Recorded-video SONIC sim2sim and comparison video | Depends on GEM-001 through GEM-003 |
+| GEM-005 | Not started | Live webcam GEM-to-SONIC stream | Depends on recorded-video validation |
+| GEM-006 | Not started | Interactive text-to-motion stream | Depends on stable SMPL stream and transition manager |
+| GEM-007 | Not started | Music/audio-to-motion stream | Depends on feature extraction and transition manager |
+| GEM-008 | Not started | SMPL-to-PiPlus 22-DoF retargeter | PiPlus robot mapping and IK validation required |
+| GEM-009 | Not started | PiPlus BFM-Zero multimodal sim2sim | Depends on GEM-008 |
+| GEM-010 | Not started | Hardware safety gate and limited real-robot trial | Depends on stable sim2sim metrics |
+
+Status values are `Not started`, `In progress`, `Blocked`, and `Done`. Mark a
+task `Done` only after its acceptance criteria and evidence are present.
+
+## Current Repository State
+
+### SONIC
+
+- Release SMPL policy is available at `checkpoints/sonic/release/smpl/policy.yaml`.
+- The ONNX contract is `smpl_input[840]`, `proprioception[930]`, with outputs `action[29]` and `token[64]`.
+- `motion_backend: smpl_zmq` consumes port 28702.
+- The SMPL stream already handles future-window buffering, root-yaw continuity, timestamp alignment, and a stationary default pose.
+- The encoder uses canonical 24-joint root-local SMPL positions, relative root orientation, and six retargeted G1 wrist joint angles.
+
+### PiPlus BFM-Zero
+
+- The PiPlus 22-DoF actor and backward encoder are merged into one policy ONNX.
+- PiPlus-specific observation construction and deploy YAML are implemented.
+- The LAFAN training pickle can be converted to any4hdmi NPZ.
+- Offline, ZMQ, and synchronized side-by-side video workflows are implemented.
+- The missing multimodal component is SMPL-to-PiPlus reference retargeting.
+
+### GEM
+
+- The official repository is cloned at `/home/sunteng/Projects/WBC_Telep/GENMO`.
+- The workstation has an RTX 5060 Ti with 16 GB VRAM and sufficient disk space.
+- The GENMO source is cloned at `/home/sunteng/Projects/WBC_Telep/GENMO`.
+- `gem_smpl.ckpt` and the six official webcam ONNX files are downloaded into
+  `inputs/pretrained/` and `inputs/onnx/`; all seven SHA-256 values match the
+  NVIDIA GEM-X Hugging Face metadata.
+- Raw HMR2 and ViTPose checkpoints are downloaded into
+  `inputs/checkpoints/{hmr2,vitpose}/` from the public `camenduru/GVHMR` mirror;
+  their byte sizes and SHA-256 values match that mirror's metadata.
+- `SMPLX_NEUTRAL.npz` is not publicly downloadable without accepting the SMPL-X
+  license; HMR2/ViTPose raw PyTorch checkpoints are linked only from GVHMR's
+  Google Drive, which is unreachable from this host at present.
+- No real `smpl_params.pt` generated by GEM is currently available in this workspace.
+
+## Target Architecture
+
+```text
+                         +------------------+
+recorded/live video ---->| GEM pose estimate|----+
+                         +------------------+    |
+                                                  v
+text prompt ------------>| GEM generation   |  canonical SMPL stream
+music/audio ------------>| + chunk manager  |    |          |
+                         +------------------+    |          |
+                                                  |          +-> G1 retarget -> SONIC
+                                                  |
+                                                  +-> PiPlus retarget -> BFM-Zero
+```
+
+All sources must converge on a shared motion record with explicit source FPS,
+frame index, source timestamp, confidence/validity state, and segment boundary.
+Policy-specific retargeting belongs after this common representation.
+
+## Phase 1: Recorded Video to SONIC
+
+### GEM-001: Generic GEM SMPL Publisher
+
+Objective: load official GEM `smpl_params.pt`, convert its global body parameters
+to the existing SONIC SMPL contract, and replay them on port 28702 at source FPS.
+
+Implementation requirements:
+
+- load tensors without importing the GEM repository;
+- require `body_params_global.body_pose` and `global_orient`;
+- validate `[T,21,3]` and `[T,3]` axis-angle layouts;
+- construct canonical SONIC `smpl_joint_pos_root` using the existing
+  `human_joints_info.pkl` FK path;
+- convert GEM Y-up root orientation to the SONIC root quaternion convention;
+- publish monotonic frame indices, source timestamps, publish timestamps, and
+  `motion_first_frame`;
+- publish a configurable future window so the SONIC ten-step observation has
+  enough current/future data;
+- support optional G1 joint reference arrays in NPZ/PT format;
+- warn clearly when falling back to the G1 default pose, because wrist tracking
+  is degraded in that mode;
+- support `--dry-run` for file/schema validation without ZMQ.
+
+Acceptance criteria:
+
+- unit tests cover valid GEM tensors, malformed shapes, default wrist fallback,
+  external G1 joint reference loading, and payload shapes;
+- `uv run python -m py_compile` passes;
+- a synthetic GEM file passes `--dry-run` and emits the documented shapes;
+- a subscriber receives monotonic, correctly shaped messages at the requested
+  FPS.
+
+### GEM-002: GEM Environment and Recorded Inference
+
+Objective: produce the first real `smpl_params.pt` from a short recorded human
+video.
+
+Tasks:
+
+1. Create the GEM Python 3.10 CUDA environment outside the sim2real root.
+2. Obtain `SMPLX_NEUTRAL.npz` and place it under the GEM input path.
+3. Download or provide the GEM-SMPL checkpoint, HMR2, and ViTPose assets.
+4. Run video-only inference with `--no_render` first.
+5. Inspect tensor shapes, NaNs, orientation continuity, duration, GPU memory, and elapsed time.
+6. Run the rendered comparison only after parameter output is valid.
+
+Acceptance criteria:
+
+- command, source video, exact checkpoint, GEM commit, GPU, elapsed time, peak
+  memory, and output path are recorded below;
+- `smpl_params.pt` contains finite global body parameters for the full clip;
+- GEM rendering follows the subject without identity switches.
+
+Required external artifact not in this repository:
+
+- `SMPLX_NEUTRAL.npz`, obtained under the SMPL-X license.
+
+### GEM-003: Complete G1 Wrist Retargeting
+
+Objective: replace the default-pose wrist fallback with robot joint references
+derived from the same GEM motion.
+
+Tasks:
+
+1. Convert GEM SMPL rotations/joints into the source representation expected by a G1 retargeter.
+2. Reuse GMR if it supports SMPL input; otherwise add a minimal SMPL-to-G1 IK adapter.
+3. Preserve the exact IsaacLab joint order in the SONIC policy YAML.
+4. Extract and verify the six wrist roll/pitch/yaw references.
+5. Compare the result against a known official SONIC SMPL plus G1 pair.
+
+Acceptance criteria:
+
+- no default-pose fallback warning;
+- all 29 G1 references are finite and within limits;
+- wrist directions agree visually with the GEM human motion;
+- the SONIC input vector is exactly 840 values and the wrist slice changes when the arms rotate.
+
+### GEM-004: Recorded-Video SONIC Sim2sim
+
+Run three terminals:
+
+```bash
+uv run python sim2real/teleop/gem_smpl_pub.py \
+  --gem-params /absolute/path/to/smpl_params.pt
+```
+
+```bash
+uv run sim2real/sim_env/base_sim.py --robot g1
+```
+
+```bash
+uv run sim2real/rl_policy/tracking.py \
+  --robot g1 \
+  --policy-config checkpoints/sonic/release/smpl/policy.yaml \
+  --inference-backend onnx-cpu \
+  --robot-io zmq \
+  --controller passive
+```
+
+Acceptance criteria:
+
+- the policy starts after the SMPL buffer has accumulated its future window;
+- reference and policy timelines are aligned;
+- no NaNs, shape errors, or root-heading discontinuities occur;
+- a side-by-side source-video/GEM/robot recording is saved;
+- fall status and root tracking error are recorded.
+
+## Phase 2: Live Video
+
+### GEM-005: Webcam Stream
+
+Tasks:
+
+1. Benchmark the official ONNX modules with and without HMR2 image features.
+2. Extend or wrap `demo_webcam.py` to emit a structured per-frame result rather than only render it.
+3. Preserve camera capture timestamp through the asynchronous pipeline.
+4. Publish the same SMPL ZMQ schema used by GEM-001.
+5. Add confidence gating, person-locking, dropout hold, and controlled recovery.
+6. Measure camera-to-policy and camera-to-simulation latency separately.
+
+Acceptance criteria:
+
+- sustained throughput is at least the selected input FPS or the publisher reports intentional downsampling;
+- timestamps never make the policy appear ahead of the source video;
+- tracking loss produces a stable hold rather than a sudden pose jump;
+- a 60-second live-camera comparison video and latency report are saved.
+
+## Phase 3: Language and Music
+
+### GEM-006: Interactive Text
+
+Implement a prompt service with fixed-duration generation chunks, a bounded
+queue, cancellation, segment overlap, and transition-to-stand. Start with manual
+prompts and do not connect speech recognition until text control is stable.
+
+Acceptance criteria:
+
+- a new prompt cannot reorder already published motion;
+- the policy never consumes an empty future window;
+- segment boundaries do not exceed configured pose/angular velocity limits;
+- prompt, seed, generation time, and generated artifact are logged.
+
+### GEM-007: Music and Audio
+
+First reproduce an official offline audio/music-conditioned sample. Then add
+microphone/file capture and feature extraction matching GEM's training input.
+Use beat-aware chunk overlap rather than joining independent clips at arbitrary
+frames.
+
+Acceptance criteria:
+
+- offline generated motion is reproducible from a saved audio file;
+- live audio buffering has bounded latency and no timestamp reversal;
+- a 60-second music-to-motion SONIC sim2sim recording is saved.
+
+## Phase 4: PiPlus BFM-Zero
+
+### GEM-008: SMPL-to-PiPlus Retargeting
+
+Trace the PiPlus training motion representation and implement one reusable
+retargeter that outputs the exact 22-DoF order and root/body frames used by the
+BFM-Zero backward encoder. Validate the retargeted qpos through the PiPlus MJCF
+before policy inference.
+
+Acceptance criteria:
+
+- qpos is `[T,29]` in the configured MuJoCo order;
+- all named joints match the deploy YAML and MJCF;
+- FK body positions/quaternions are finite and continuous;
+- converted known motions agree numerically or visually with the existing PiPlus LAFAN dataset.
+
+### GEM-009: PiPlus Multimodal Sim2sim
+
+Feed the retargeted motion through the existing normal ZMQ BFM-Zero path. Reuse
+the synchronized recording workflow and record source video, retargeted
+reference, and policy simulation on one timeline.
+
+## Phase 5: Hardware Gate
+
+### GEM-010: Controlled Robot Trial
+
+Hardware is blocked until recorded and live sim2sim pass. Add input validity,
+velocity, height, joint-limit, fall, communication-timeout, and operator-stop
+gates. Begin with upper-body motion and fixed feet before permitting locomotion.
+
+## Experiment Log
+
+Append one row per meaningful run. Do not overwrite failed runs; they are useful
+evidence.
+
+| Date | ID | Source | Command / config | Output | Result / metrics |
+|---|---|---|---|---|---|
+| 2026-08-12 | GEM-000 | NVlabs/GENMO `16bebf4` | repository inspection | GEM report | Video/text official demos confirmed; audio/music model support confirmed; live webcam ONNX confirmed |
+| 2026-08-12 | PRE-004 | PiPlus BFM-Zero | commit `7a3b2c6` | PiPlus policy/video workflow | Integrated and pushed before GEM work began |
+| 2026-08-12 | GEM-002 | NVIDIA GEM-X HF mirror + `camenduru/GVHMR` + GENMO `16bebf4` | resumable `wget -c` transfers | `/home/sunteng/Projects/WBC_Telep/GENMO/inputs/{pretrained,onnx,checkpoints}` | 9/9 files complete; all hashes verified; only licensed `SMPLX_NEUTRAL.npz` remains |
+
+## Blockers and Required Inputs
+
+Current external blocker for real GEM inference:
+
+- `SMPLX_NEUTRAL.npz` is not present locally. It must be obtained from the
+  official SMPL-X distribution under its license.
+- Raw PyTorch `epoch=10-step=25000.ckpt` and `vitpose-h-multi-coco.pth` are
+  available from the recorded-video path via a public GVHMR mirror. The
+  downloaded ONNX path is also complete for the webcam pipeline.
+
+Potential later inputs:
+
+- a representative short recorded video with one visible full-body subject;
+- the desired language prompt set and action safety vocabulary;
+- representative music files for offline reproduction;
+- PiPlus SMPL/robot retargeting configuration if one exists in the training team.
+
+## Resume Point
+
+When resuming this project, do the following in order:
+
+1. Read the progress ledger above and select the first `In progress` item.
+2. Inspect `git status` and preserve unrelated user files.
+3. For GEM-001, inspect `sim2real/teleop/gem_smpl_pub.py` and its tests, then run the documented validation commands.
+4. For GEM-002, first check whether `/home/sunteng/Projects/WBC_Telep/GENMO/inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz` exists.
+5. Add every real run to the experiment log before moving a task to `Done`.

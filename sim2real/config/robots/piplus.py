@@ -56,6 +56,58 @@ PIPLUS_H0W_JOINT_NAMES = (
     "l_ankle_roll_joint",
 )
 
+# ROS ``JointState.position`` order from instinct_onboard's PiPlus BFM node.
+# ``hardware_joint_map[policy_idx]`` selects the corresponding ROS index.
+PIPLUS_H0W_HARDWARE_JOINT_NAMES = (
+    "l_ankle_roll_joint",
+    "l_ankle_pitch_joint",
+    "l_calf_joint",
+    "l_thigh_joint",
+    "l_hip_roll_joint",
+    "l_hip_pitch_joint",
+    "r_ankle_roll_joint",
+    "r_ankle_pitch_joint",
+    "r_calf_joint",
+    "r_thigh_joint",
+    "r_hip_roll_joint",
+    "r_hip_pitch_joint",
+    "l_shoulder_pitch_joint",
+    "l_shoulder_roll_joint",
+    "l_upper_arm_joint",
+    "l_elbow_joint",
+    "r_shoulder_pitch_joint",
+    "r_shoulder_roll_joint",
+    "r_upper_arm_joint",
+    "r_elbow_joint",
+    "head_yaw_joint",
+    "head_pitch_joint",
+)
+PIPLUS_H0W_HARDWARE_JOINT_MAP = (
+    16,
+    17,
+    18,
+    19,
+    12,
+    13,
+    14,
+    15,
+    20,
+    21,
+    11,
+    10,
+    9,
+    8,
+    7,
+    6,
+    5,
+    4,
+    3,
+    2,
+    1,
+    0,
+)
+PIPLUS_H0W_HARDWARE_JOINT_SIGNS = (1.0,) * len(PIPLUS_H0W_JOINT_NAMES)
+
 PIPLUS_H0W_BODY_NAMES = (
     "base_link",
     "torso_link",
@@ -212,6 +264,9 @@ PIPLUS_H0W_CFG = RobotCfg(
     ),
     publish_hz=50.0,
     interface=None,
+    hardware_joint_names=PIPLUS_H0W_HARDWARE_JOINT_NAMES,
+    hardware_joint_map=PIPLUS_H0W_HARDWARE_JOINT_MAP,
+    hardware_joint_signs=PIPLUS_H0W_HARDWARE_JOINT_SIGNS,
     viewer_track_body_names=("base_link",),
     elastic_band_attach_body_names=("torso_link", "base_link"),
 )

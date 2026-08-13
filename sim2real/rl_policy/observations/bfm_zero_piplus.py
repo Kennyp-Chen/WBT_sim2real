@@ -82,6 +82,13 @@ PIPLUS_BFM_BODY_NAMES = (
 )
 PIPLUS_BFM_EXTENDED_BODY_NAMES = ("r_hand_link", "l_hand_link", "head_link")
 PIPLUS_BFM_ALL_BODY_NAMES = PIPLUS_BFM_BODY_NAMES + PIPLUS_BFM_EXTENDED_BODY_NAMES
+PIPLUS_BFM_HISTORY_KEYS = (
+    "actions",
+    "base_ang_vel",
+    "dof_pos",
+    "dof_vel",
+    "projected_gravity",
+)
 
 _EXTENSIONS = (
     ("r_hand_link", "r_elbow_link", np.asarray([0.0, 0.0, -0.129], dtype=np.float32)),
@@ -344,7 +351,7 @@ class bfm_zero_piplus_history_actor(_PiPlusJointSelection, namespace="bfm_zero")
     def _append_pending_current(self) -> None:
         if self._pending_written or self._pending_current is None:
             return
-        for key in sorted(self._history):
+        for key in PIPLUS_BFM_HISTORY_KEYS:
             history = self._history[key]
             history[1:] = history[:-1].copy()
             history[0] = self._pending_current[key]
@@ -352,7 +359,7 @@ class bfm_zero_piplus_history_actor(_PiPlusJointSelection, namespace="bfm_zero")
 
     def compute(self) -> np.ndarray:
         history = np.concatenate(
-            [self._history[key].reshape(-1) for key in sorted(self._history)], axis=0
+            [self._history[key].reshape(-1) for key in PIPLUS_BFM_HISTORY_KEYS], axis=0
         )
         if history.size != PIPLUS_BFM_HISTORY_DIM:
             raise ValueError(

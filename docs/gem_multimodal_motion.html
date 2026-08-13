@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GEM 多模态动作前端</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; line-height: 1.6; }
+    body { margin: 0; color: #17202a; background: #f4f6f8; }
+    main { max-width: 980px; margin: 0 auto; padding: 42px 24px 72px; background: #fff; }
+    h1 { margin-top: 0; font-size: 2.2rem; }
+    h2 { margin-top: 2.3rem; border-bottom: 1px solid #dfe5ea; padding-bottom: .35rem; }
+    h3 { margin-top: 1.7rem; }
+    code, pre { font-family: "SFMono-Regular", Consolas, monospace; }
+    pre { overflow-x: auto; padding: 16px; background: #17202a; color: #f8fafc; border-radius: 6px; }
+    table { width: 100%; border-collapse: collapse; margin: 14px 0 24px; }
+    th, td { border: 1px solid #dfe5ea; padding: 8px 10px; text-align: left; vertical-align: top; }
+    th { background: #edf1f4; }
+    a { color: #1261a0; }
+    .note { border-left: 4px solid #1261a0; padding: 10px 14px; background: #eef6fc; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>GEM 多模态动作前端</h1>
+  <p class="note">GEM/GENMO 是人体动作估计和生成模型，不是机器人低层控制策略。它必须通过 SMPL 到机器人动作的适配层接入 SONIC 或 BFM-Zero。</p>
+  <p>完整技术报告请打开同目录的 <code>gem_multimodal_motion.md</code>；长期实施顺序和进度请查看 <code>tutorials/gem-integration-plan.md</code>。</p>
+  <h2>推荐架构</h2>
+  <pre>视频 / 文本 / 音频 / 音乐
+    -> GEM
+    -> SMPL body parameters
+    -> 机器人重定向 / IK
+    -> SONIC 或 PiPlus BFM-Zero
+    -> sim2sim / 真机</pre>
+  <h2>可行性</h2>
+  <table><thead><tr><th>输入</th><th>判断</th><th>第一步</th></tr></thead><tbody>
+    <tr><td>录制视频</td><td>可行，最适合第一里程碑</td><td>GEM <code>smpl_params.pt</code> 到 SONIC SMPL ZMQ</td></tr>
+    <tr><td>实时视频</td><td>可行，但有 120 帧 context 和 GPU 延迟</td><td>先测 ONNX full / <code>--no_imgfeat</code></td></tr>
+    <tr><td>语言</td><td>可行，当前更接近 10 秒分段生成</td><td>增加 prompt queue 和片段拼接</td></tr>
+    <tr><td>音乐/音频</td><td>模型支持，实时输入需要自建前端</td><td>先复现离线音频条件样本</td></tr>
+  </tbody></table>
+  <h2>当前结论</h2>
+  <p>最短路径是 GEM 视频到 SONIC SMPL sim2sim。PiPlus BFM-Zero 需要额外的 SMPL-to-PiPlus 22DoF 重定向器，不能直接接收 GEM 输出。</p>
+  <p>官方项目：<a href="https://github.com/NVlabs/GENMO">NVlabs/GENMO</a>；论文：<a href="https://arxiv.org/abs/2505.01425">arXiv 2505.01425</a>。</p>
+</main>
+</body>
+</html>

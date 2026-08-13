@@ -43,6 +43,8 @@ const sidebars: SidebarsConfig = {
         'tutorials/pico-teleoperation',
         'tutorials/motion-recording',
         'tutorials/run-external-policies',
+        'tutorials/gem-integration-plan',
+        'piplus_bfmzero_sim2real',
       ],
     },
     'faq',
@@ -94,6 +96,11 @@ const sidebars: SidebarsConfig = {
           type: 'doc',
           id: 'sonic_smpl_input',
           label: 'SONIC SMPL Input',
+        },
+        {
+          type: 'doc',
+          id: 'gem-multimodal-motion',
+          label: 'GEM Multimodal Motion',
         },
         {
           type: 'doc',

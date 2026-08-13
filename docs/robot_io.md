@@ -92,3 +92,20 @@ robot network interface is not the default `eth0`.
 Use `inline` for the normal real-robot deploy path. Use ZMQ bridge mode when
 you need process isolation, want to debug the policy and robot bridge
 separately, or are running sim2sim with `base_sim.py`.
+
+## PiPlus H0W BFM-Zero
+
+PiPlus uses the same `LowStateMessage` / `LowCmdMessage` ZMQ contract, with the
+ROS2 hardware adapter in `scripts/piplus/real_bridge.py`. The adapter owns the
+PiPlus-specific ROS joint order, `xyzw` to `wxyz` IMU conversion, motor-control
+services, and command safety clipping. The policy process remains unchanged.
+
+```bash
+uv run python scripts/piplus/real_bridge.py --robot piplus_h0w --dryrun
+uv run python sim2real/rl_policy/tracking.py \
+  --robot piplus_h0w --robot-io zmq --controller keyboard \
+  --policy-config checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml
+```
+
+For the complete three-terminal deployment and the PiPlus BFM-Zero input
+contract, see [PiPlus BFM-Zero sim2real](./piplus_bfmzero_sim2real.md).

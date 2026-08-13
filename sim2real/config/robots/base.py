@@ -63,6 +63,12 @@ class RobotCfg:
     low_cmd_port: int = PORTS["low_cmd"]
     low_cmd_bind_addr: str = "*"
     low_cmd_host: str = "127.0.0.1"
+    # Optional hardware-side joint contract.  Policy and simulation arrays
+    # always use ``joint_names``; a bridge may use this mapping for a motor
+    # driver whose array order differs from the policy order.
+    hardware_joint_names: tuple[str, ...] = ()
+    hardware_joint_map: tuple[int, ...] = ()
+    hardware_joint_signs: tuple[float, ...] = ()
     unitree_legged_const: Mapping[str, int | float] = field(
         default_factory=lambda: dict(UNITREE_LEGGED_CONST)
     )

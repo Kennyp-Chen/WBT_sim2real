@@ -159,6 +159,9 @@ encodes at 30 FPS. Its left panel follows the frame actually emitted by the
 ZMQ publisher, while the right panel shows the policy-driven simulation. The
 final log reports nominal duration, wall duration, and recorder clock drift.
 
+For PiPlus hardware deployment, use the ROS2-to-ZMQ adapter and the complete
+state/command contract in [the PiPlus BFM-Zero sim2real guide](docs/piplus_bfmzero_sim2real.md).
+
 ## Migrating to sim2real
 
 This repo includes a Codex skill for adapting policies trained in external codebases into `sim2real`:
