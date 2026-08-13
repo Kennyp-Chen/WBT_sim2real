@@ -32,6 +32,24 @@ def _single_input(model: onnx.ModelProto, name: str) -> onnx.ValueInfoProto:
     return matches[0]
 
 
+def _input(model: onnx.ModelProto, name: str) -> onnx.ValueInfoProto:
+    matches = [value for value in model.graph.input if value.name == name]
+    if len(matches) != 1:
+        raise ValueError(f"Expected one input {name!r}, got {[value.name for value in model.graph.input]}")
+    return matches[0]
+
+
+def _infer_action_dim(model: onnx.ModelProto) -> int:
+    shape = _shape(model.graph.output[0])
+    value = shape[-1]
+    if isinstance(value, int):
+        return value
+    for initializer in model.graph.initializer:
+        if "last_action" in initializer.name and initializer.dims:
+            return int(initializer.dims[-1])
+    raise ValueError(f"Could not infer action dim from output shape {shape}")
+
+
 def _rename_input_nodes(model: onnx.ModelProto, old_name: str, new_name: str) -> None:
     for node in model.graph.node:
         for index, input_name in enumerate(node.input):
@@ -53,7 +71,7 @@ def _make_concat_input(
             helper.make_tensor_value_info(
                 name,
                 TensorProto.FLOAT,
-                ["batch" if input_prefix == "actor" else 8, dimension],
+                ["batch" if input_prefix == "actor" else "frames", dimension],
             )
         )
     nodes.append(
@@ -72,19 +90,47 @@ def build(actor_path: Path, encoder_path: Path, output_path: Path) -> None:
     encoder = add_prefix(onnx.load(encoder_path, load_external_data=True), "encoder/")
 
     actor_input = _single_input(actor, "actor/actor_obs")
-    encoder_input = _single_input(encoder, "encoder/encoder_obs")
-    if _shape(actor_input)[-1] != 616:
+    encoder_obs_input = next((value for value in encoder.graph.input if value.name == "encoder/encoder_obs"), None)
+    split_encoder = encoder_obs_input is None
+    if split_encoder:
+        encoder_state_input = _input(encoder, "encoder/state")
+        encoder_priv_input = _input(encoder, "encoder/privileged_state")
+        encoder_input = encoder_state_input
+        encoder_obs_dim = int(_shape(encoder_state_input)[-1]) + int(_shape(encoder_priv_input)[-1])
+    else:
+        encoder_input = encoder_obs_input
+        encoder_obs_dim = int(_shape(encoder_input)[-1])
+    actor_obs_dim = int(_shape(actor_input)[-1])
+    if actor_obs_dim <= 256:
         raise ValueError(f"Unexpected actor input shape {_shape(actor_input)}")
-    if _shape(encoder_input)[-1] != 438:
+    if encoder_obs_dim <= 403:
         raise ValueError(f"Unexpected encoder input shape {_shape(encoder_input)}")
+    actor_semantic_dim = actor_obs_dim - 256
+    output_action_dim = _infer_action_dim(actor)
+    state_dim = encoder_obs_dim - 403
+    history_dim = actor_semantic_dim - state_dim - output_action_dim
+    if history_dim <= 0:
+        raise ValueError(f"Cannot infer actor dimensions from actor={_shape(actor_input)}, encoder={_shape(encoder_input)}")
 
     # The source exporter fixes batch=1.  All graph operations are batch-safe,
     # so make the window batch explicit for the eight target frames.
-    encoder_input.type.tensor_type.shape.dim[0].dim_value = 8
-    encoder_input.type.tensor_type.shape.dim[0].ClearField("dim_param")
+    if not split_encoder:
+        encoder_input.type.tensor_type.shape.dim[0].dim_value = 8
+        encoder_input.type.tensor_type.shape.dim[0].ClearField("dim_param")
+    else:
+        for value in (encoder_state_input, encoder_priv_input):
+            value.type.tensor_type.shape.dim[0].dim_value = 8
+            value.type.tensor_type.shape.dim[0].ClearField("dim_param")
 
     _rename_input_nodes(actor, "actor/actor_obs", "actor_obs_concat")
-    _rename_input_nodes(encoder, "encoder/encoder_obs", "encoder_obs_concat")
+    if split_encoder:
+        _rename_input_nodes(encoder, "encoder/state", "encoder_state")
+        _rename_input_nodes(encoder, "encoder/privileged_state", "privileged_state")
+        zero_last_action = helper.make_tensor("encoder_zero_last_action", TensorProto.FLOAT, [1, output_action_dim], [0.0] * output_action_dim)
+        encoder.graph.initializer.append(zero_last_action)
+        _rename_input_nodes(encoder, "encoder/last_action", "encoder_zero_last_action")
+    else:
+        _rename_input_nodes(encoder, "encoder/encoder_obs", "encoder_obs_concat")
 
     inputs: list[onnx.ValueInfoProto] = []
     prefix_nodes: list[onnx.NodeProto] = []
@@ -93,7 +139,7 @@ def build(actor_path: Path, encoder_path: Path, output_path: Path) -> None:
         inputs=inputs,
         output_name="actor_obs_concat",
         input_names=["actor_state", "last_action", "history_actor", "latent_z"],
-        dimensions=[50, 22, 288, 256],
+        dimensions=[state_dim, output_action_dim, history_dim, 256],
         input_prefix="actor",
     )
     # latent_z is internal, so remove it from the public inputs and connect the
@@ -102,23 +148,26 @@ def build(actor_path: Path, encoder_path: Path, output_path: Path) -> None:
     prefix_nodes.pop()
     inputs.extend(
         [
-            helper.make_tensor_value_info("encoder_state", TensorProto.FLOAT, [8, 50]),
+            helper.make_tensor_value_info("encoder_state", TensorProto.FLOAT, [8, state_dim]),
             helper.make_tensor_value_info(
-                "privileged_state", TensorProto.FLOAT, [8, 388]
+                "privileged_state", TensorProto.FLOAT, [8, 403]
             ),
             helper.make_tensor_value_info(
                 "encoder_window_weight", TensorProto.FLOAT, [8, 1]
             ),
         ]
     )
-    _make_concat_input(
-        nodes=prefix_nodes,
-        inputs=[],
-        output_name="encoder_obs_concat",
-        input_names=["encoder_state", "privileged_state"],
-        dimensions=[50, 388],
-        input_prefix="encoder",
-    )
+    if split_encoder:
+        pass
+    else:
+        _make_concat_input(
+            nodes=prefix_nodes,
+            inputs=[],
+            output_name="encoder_obs_concat",
+            input_names=["encoder_state", "privileged_state"],
+            dimensions=[state_dim, 403],
+            input_prefix="encoder",
+        )
 
     initializers = list(actor.graph.initializer) + list(encoder.graph.initializer)
     nodes = list(prefix_nodes) + list(encoder.graph.node)
@@ -234,11 +283,11 @@ def build(actor_path: Path, encoder_path: Path, output_path: Path) -> None:
         for index, output_name in enumerate(node.output):
             if output_name == actor_output_name:
                 node.output[index] = "action"
-    output = helper.make_tensor_value_info("action", TensorProto.FLOAT, ["batch", 22])
+    output = helper.make_tensor_value_info("action", TensorProto.FLOAT, ["batch", output_action_dim])
 
     graph = helper.make_graph(
         nodes,
-        "bfm_zero_piplus_semantic_policy",
+        "bfm_zero_semantic_policy",
         inputs,
         [output],
         initializer=initializers,
@@ -253,7 +302,10 @@ def build(actor_path: Path, encoder_path: Path, output_path: Path) -> None:
     model.metadata_props.add(key="source_backward_encoder", value=str(encoder_path))
     model.metadata_props.add(
         key="contract",
-        value="actor_state[50],last_action[22],history_actor[288],encoder_state[8,50],privileged_state[8,388],encoder_window_weight[8,1] -> action[22]",
+        value=(
+            f"actor_state[{state_dim}],last_action[{output_action_dim}],history_actor[{history_dim}],"
+            f"encoder_state[8,{state_dim}],privileged_state[8,403],encoder_window_weight[8,1] -> action[{output_action_dim}]"
+        ),
     )
     onnx.checker.check_model(model)
     output_path.parent.mkdir(parents=True, exist_ok=True)

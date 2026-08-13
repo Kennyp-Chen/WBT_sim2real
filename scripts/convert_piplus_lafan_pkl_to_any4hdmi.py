@@ -11,8 +11,9 @@ import joblib
 import numpy as np
 from any4hdmi.core.format import save_motion, write_manifest
 from any4hdmi.dataset.interpolation import resampled_length, slerp
+from sim2real.config.robots import get_robot_cfg
 
-JOINT_NAMES = [
+PIPLUS_H0W_JOINT_NAMES = [
     "r_shoulder_pitch_joint",
     "r_shoulder_roll_joint",
     "r_upper_arm_joint",
@@ -36,6 +37,28 @@ JOINT_NAMES = [
     "l_ankle_pitch_joint",
     "l_ankle_roll_joint",
 ]
+PIPLUS_LSE_23DOF_JOINT_NAMES = [
+    "r_hip_pitch_joint", "r_hip_roll_joint", "r_thigh_joint", "r_calf_joint",
+    "r_ankle_pitch_joint", "r_ankle_roll_joint", "l_hip_pitch_joint", "l_hip_roll_joint",
+    "l_thigh_joint", "l_calf_joint", "l_ankle_pitch_joint", "l_ankle_roll_joint",
+    "waist_yaw_joint", "r_shoulder_pitch_joint", "r_shoulder_roll_joint", "r_upper_arm_joint",
+    "r_elbow_joint", "l_shoulder_pitch_joint", "l_shoulder_roll_joint", "l_upper_arm_joint",
+    "l_elbow_joint", "head_yaw_joint", "head_pitch_joint",
+]
+HI_25DOF_JOINT_NAMES = [
+    "waist_yaw_joint", "r_shoulder_pitch_joint", "r_shoulder_roll_joint", "r_upper_arm_joint",
+    "r_elbow_joint", "r_wrist_joint", "l_shoulder_pitch_joint", "l_shoulder_roll_joint",
+    "l_upper_arm_joint", "l_elbow_joint", "l_wrist_joint", "head_yaw_joint", "head_pitch_joint",
+    "r_hip_pitch_joint", "r_hip_roll_joint", "r_thigh_joint", "r_calf_joint", "r_ankle_pitch_joint",
+    "r_ankle_roll_joint", "l_hip_pitch_joint", "l_hip_roll_joint", "l_thigh_joint", "l_calf_joint",
+    "l_ankle_pitch_joint", "l_ankle_roll_joint",
+]
+
+ROBOT_JOINT_NAMES = {
+    "piplus_h0w": PIPLUS_H0W_JOINT_NAMES,
+    "piplus_lse_23dof": PIPLUS_LSE_23DOF_JOINT_NAMES,
+    "hi_25dof": HI_25DOF_JOINT_NAMES,
+}
 
 
 def _safe_name(value: str) -> str:
@@ -66,8 +89,10 @@ def _resample_qpos(
 
 
 def convert(
-    source_path: Path, output_root: Path, mjcf_path: Path, target_fps: float
+    source_path: Path, output_root: Path, mjcf_path: Path, target_fps: float, robot: str
 ) -> None:
+    robot_cfg = get_robot_cfg(robot)
+    joint_names = list(robot_cfg.joint_names)
     source = joblib.load(source_path)
     if not isinstance(source, dict) or not source:
         raise ValueError(f"Expected a non-empty motion dict, got {type(source)!r}")
@@ -82,13 +107,13 @@ def convert(
         if not isinstance(payload, dict):
             raise ValueError(f"Motion {source_name!r} is not a dict")
         source_joint_names = [str(name) for name in payload["joint_names"]]
-        if set(source_joint_names) != set(JOINT_NAMES):
-            missing = [name for name in JOINT_NAMES if name not in source_joint_names]
-            extra = [name for name in source_joint_names if name not in JOINT_NAMES]
+        if set(source_joint_names) != set(joint_names):
+            missing = [name for name in joint_names if name not in source_joint_names]
+            extra = [name for name in source_joint_names if name not in joint_names]
             raise ValueError(
                 f"Motion {source_name!r} joint mismatch: missing={missing}, extra={extra}"
             )
-        joint_indices = [source_joint_names.index(name) for name in JOINT_NAMES]
+        joint_indices = [source_joint_names.index(name) for name in joint_names]
         root_pos = np.asarray(payload["root_trans_offset"], dtype=np.float32)
         root_rot_xyzw = np.asarray(payload["root_rot"], dtype=np.float32)
         dof = np.asarray(payload["dof"], dtype=np.float32)[:, joint_indices]
@@ -100,7 +125,7 @@ def convert(
             raise ValueError(
                 f"Motion {source_name!r} root_rot shape={root_rot_xyzw.shape}"
             )
-        if dof.shape != (root_pos.shape[0], len(JOINT_NAMES)):
+        if dof.shape != (root_pos.shape[0], len(joint_names)):
             raise ValueError(f"Motion {source_name!r} dof shape={dof.shape}")
 
         # HumanoidVerse stores root rotations as xyzw; any4hdmi qpos is wxyz.
@@ -135,11 +160,11 @@ def convert(
         "root_qx",
         "root_qy",
         "root_qz",
-        *JOINT_NAMES,
+        *joint_names,
     ]
     write_manifest(
         output_root,
-        dataset_name="piplus_h0w_lafan1_0W_zedmini_260807_runjump_acc2_cb",
+        dataset_name=f"{robot_cfg.name}_lafan",
         mjcf=mjcf_path,
         timestep=1.0 / target_fps,
         qpos_names=qpos_names,
@@ -149,7 +174,8 @@ def convert(
             "pickle": str(source_path.resolve()),
             "target_fps": target_fps,
             "root_representation": "xyz + qx qy qz qw converted to xyz + qw qx qy qz",
-            "joint_names": JOINT_NAMES,
+            "robot": robot_cfg.name,
+            "joint_names": joint_names,
             "entries": entries,
         },
         total_hours=total_frames / target_fps / 3600.0,
@@ -175,8 +201,9 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--mjcf", type=Path, required=True)
     parser.add_argument("--target-fps", type=float, default=50.0)
+    parser.add_argument("--robot", type=str, default="piplus_h0w")
     args = parser.parse_args()
-    convert(args.source, args.output, args.mjcf, args.target_fps)
+    convert(args.source, args.output, args.mjcf, args.target_fps, args.robot)
 
 
 if __name__ == "__main__":
