@@ -858,6 +858,15 @@ class IntegratedSimRuntime:
             raise ValueError("No root joint found in the MuJoCo model.")
         self.root_qpos_adr = int(self.mj_model.jnt_qposadr[root_joint_idx])
         self.root_qvel_adr = int(self.mj_model.jnt_dofadr[root_joint_idx])
+        imu_candidates = self.robot_cfg.imu_body_names or self.robot_cfg.viewer_track_body_names
+        self.imu_body_id = -1
+        for body_name in imu_candidates:
+            body_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id >= 0:
+                self.imu_body_id = int(body_id)
+                break
+        if self.imu_body_id < 0:
+            raise ValueError(f"Failed to resolve IMU body from candidates: {imu_candidates}")
 
         joint_indices, joint_names_matched, joint_effort_limit = (
             resolve_matching_names_values(
@@ -894,9 +903,14 @@ class IntegratedSimRuntime:
         root_qpos = int(self.root_qpos_adr)
         root_qvel = int(self.root_qvel_adr)
         state.root_pos_w[:] = self.mj_data.qpos[root_qpos : root_qpos + 3]
-        state.root_quat_w[:] = self.mj_data.qpos[root_qpos + 3 : root_qpos + 7]
+        state.root_quat_w[:] = self.mj_data.xquat[self.imu_body_id]
         state.root_lin_vel_w[:] = self.mj_data.qvel[root_qvel : root_qvel + 3]
-        state.root_ang_vel_b[:] = self.mj_data.qvel[root_qvel + 3 : root_qvel + 6]
+        imu_velocity = np.zeros(6, dtype=np.float64)
+        mujoco.mj_objectVelocity(
+            self.mj_model, self.mj_data, mujoco.mjtObj.mjOBJ_BODY,
+            self.imu_body_id, imu_velocity, 1,
+        )
+        state.root_ang_vel_b[:] = imu_velocity[:3]
 
         joint_pos = np.zeros_like(state.joint_pos)
         joint_vel = np.zeros_like(state.joint_vel)

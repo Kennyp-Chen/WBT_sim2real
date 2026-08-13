@@ -75,6 +75,9 @@ class RobotCfg:
     root_joint_names: tuple[str, ...] = ("floating_base_joint", "pelvis_root")
     viewer_track_body_names: tuple[str, ...] = ("pelvis",)
     elastic_band_attach_body_names: tuple[str, ...] = ("torso_link", "base_link")
+    # Body used by the training-time IMU observation. This may differ from
+    # the floating-base/root body for robots with an actuated waist.
+    imu_body_names: tuple[str, ...] = ()
 
     @property
     def qpos_size(self) -> int:

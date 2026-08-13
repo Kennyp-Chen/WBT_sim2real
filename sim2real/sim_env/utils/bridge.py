@@ -85,6 +85,15 @@ class SimulationBridge:
             raise ValueError("No root joint found in the MuJoCo model.")
         self.root_qpos_adr = self.mj_model.jnt_qposadr[root_joint_idx]
         self.root_qvel_adr = self.mj_model.jnt_dofadr[root_joint_idx]
+        imu_candidates = self.robot_cfg.imu_body_names or self.robot_cfg.viewer_track_body_names
+        self.imu_body_id = -1
+        for body_name in imu_candidates:
+            body_id = mujoco.mj_name2id(self.mj_model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+            if body_id >= 0:
+                self.imu_body_id = int(body_id)
+                break
+        if self.imu_body_id < 0:
+            raise ValueError(f"Failed to resolve IMU body from candidates: {imu_candidates}")
 
         joint_effort_limit_dict = self.robot_cfg.joint_effort_limit
         joint_indices, joint_names_matched, joint_effort_limit = (
@@ -180,11 +189,13 @@ class SimulationBridge:
             joint_vel_full[unitree_idx] = joint_vel_partial[mjc_idx]
             joint_tau_full[unitree_idx] = joint_torque_partial[mjc_idx]
 
-        # quaternion: w, x, y, z
-        root_quat_w = self.mj_data.qpos[self.root_qpos_adr + 3:self.root_qpos_adr+7]
-
-        # angular velocity: x, y, z
-        root_ang_vel_b = self.mj_data.qvel[self.root_qvel_adr + 3:self.root_qvel_adr+6]
+        root_quat_w = self.mj_data.xquat[self.imu_body_id]
+        imu_velocity = np.zeros(6, dtype=np.float64)
+        mujoco.mj_objectVelocity(
+            self.mj_model, self.mj_data, mujoco.mjtObj.mjOBJ_BODY,
+            self.imu_body_id, imu_velocity, 1,
+        )
+        root_ang_vel_b = imu_velocity[:3]
         low_state_msg = LowStateMessage(
             quaternion=root_quat_w,
             gyroscope=root_ang_vel_b,

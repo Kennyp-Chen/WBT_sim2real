@@ -159,6 +159,26 @@ def _gains(joints: tuple[str, ...], *, high: float, ankle: float, arm: float, wr
 
 _PIPLUS_KP, _PIPLUS_KD = _gains(PIPLUS_LSE_23DOF_JOINT_NAMES, high=52.15889, ankle=52.15889, arm=32.50653, wrist=32.50653)
 _HI_KP, _HI_KD = _gains(HI_25DOF_JOINT_NAMES, high=131.22294, ankle=52.15889, arm=52.15889, wrist=32.50653)
+_PIPLUS_ARMATURE = {
+    **{name: 0.013212 for name in PIPLUS_LSE_23DOF_JOINT_NAMES[:12]},
+    "waist_yaw_joint": 0.008890,
+    **{name: 0.008234 for name in PIPLUS_LSE_23DOF_JOINT_NAMES[13:21]},
+    "head_yaw_joint": 0.001976,
+    "head_pitch_joint": 0.001976,
+}
+_HI_ARMATURE = {
+    **{name: 0.03323916 for name in HI_25DOF_JOINT_NAMES[:1]},
+    **{name: 0.013212 for name in HI_25DOF_JOINT_NAMES[1:5]},
+    "r_wrist_joint": 0.008234,
+    **{name: 0.013212 for name in HI_25DOF_JOINT_NAMES[6:10]},
+    "l_wrist_joint": 0.008234,
+    "head_yaw_joint": 0.001976,
+    "head_pitch_joint": 0.001976,
+    **{name: 0.03323916 for name in HI_25DOF_JOINT_NAMES[13:17]},
+    **{name: 0.013212 for name in HI_25DOF_JOINT_NAMES[17:19]},
+    **{name: 0.03323916 for name in HI_25DOF_JOINT_NAMES[19:23]},
+    **{name: 0.013212 for name in HI_25DOF_JOINT_NAMES[23:25]},
+}
 
 PIPLUS_LSE_23DOF_CFG = RobotCfg(
     name="piplus_lse_23dof",
@@ -166,11 +186,17 @@ PIPLUS_LSE_23DOF_CFG = RobotCfg(
     body_names=PIPLUS_LSE_23DOF_BODY_NAMES,
     joint_pos_lower_limit=PIPLUS_LSE_23DOF_LOWER,
     joint_pos_upper_limit=PIPLUS_LSE_23DOF_UPPER,
-    joint_velocity_limit={name: 60.0 for name in PIPLUS_LSE_23DOF_JOINT_NAMES},
+    joint_velocity_limit={
+        **{name: 7.12 for name in PIPLUS_LSE_23DOF_JOINT_NAMES[:12]},
+        "waist_yaw_joint": 10.47,
+        **{name: 15.91 for name in PIPLUS_LSE_23DOF_JOINT_NAMES[13:21]},
+        "head_yaw_joint": 30.37,
+        "head_pitch_joint": 30.37,
+    },
     joint_effort_limit={name: 3.0 if name.startswith("head_") else 20.0 for name in PIPLUS_LSE_23DOF_JOINT_NAMES},
     safe_joint_kp=_PIPLUS_KP,
     safe_joint_kd=_PIPLUS_KD,
-    joint_armature={name: 0.001 for name in PIPLUS_LSE_23DOF_JOINT_NAMES},
+    joint_armature=_PIPLUS_ARMATURE,
     joint_frictionloss={name: 0.02 for name in PIPLUS_LSE_23DOF_JOINT_NAMES},
     mjcf_path=_asset_path("PiPlus_S_12L8A0G2H1W_LSE_260611", "PiPlus_S_12L8A0G2H1W_LSE_260611.xml", "SIM2REAL_PIPLUS_LSE_MJCF"),
     default_qpos=(0.0, 0.0, 0.38, 1.0, 0.0, 0.0, 0.0, *tuple(PIPLUS_LSE_23DOF_DEFAULT[name] for name in PIPLUS_LSE_23DOF_JOINT_NAMES)),
@@ -181,6 +207,7 @@ PIPLUS_LSE_23DOF_CFG = RobotCfg(
     hardware_joint_signs=(1.0,) * len(PIPLUS_LSE_23DOF_JOINT_NAMES),
     viewer_track_body_names=("base_link",),
     elastic_band_attach_body_names=("torso_link", "base_link"),
+    imu_body_names=("waist_yaw_link", "base_link"),
 )
 
 HI_25DOF_CFG = RobotCfg(
@@ -189,11 +216,19 @@ HI_25DOF_CFG = RobotCfg(
     body_names=HI_25DOF_BODY_NAMES,
     joint_pos_lower_limit=HI_25DOF_LOWER,
     joint_pos_upper_limit=HI_25DOF_UPPER,
-    joint_velocity_limit={name: 60.0 for name in HI_25DOF_JOINT_NAMES},
-    joint_effort_limit={name: 3.0 if name.startswith("head_") else 20.0 for name in HI_25DOF_JOINT_NAMES},
+    joint_velocity_limit={name: 300.0 for name in HI_25DOF_JOINT_NAMES},
+    joint_effort_limit={
+        **{name: 21.0 for name in HI_25DOF_JOINT_NAMES[0:5]},
+        "r_wrist_joint": 10.0,
+        **{name: 21.0 for name in HI_25DOF_JOINT_NAMES[6:10]},
+        "l_wrist_joint": 10.0,
+        "head_yaw_joint": 3.5,
+        "head_pitch_joint": 3.5,
+        **{name: 36.0 for name in HI_25DOF_JOINT_NAMES[13:]},
+    },
     safe_joint_kp=_HI_KP,
     safe_joint_kd=_HI_KD,
-    joint_armature={name: 0.001 for name in HI_25DOF_JOINT_NAMES},
+    joint_armature=_HI_ARMATURE,
     joint_frictionloss={name: 0.02 for name in HI_25DOF_JOINT_NAMES},
     mjcf_path=_asset_path("HiPro_S_12L10A0G2H1W_FootBall_260611", "HiPro_S_12L10A0G2H1W_FootBall_260611.xml", "SIM2REAL_HI_MJCF"),
     default_qpos=(0.0, 0.0, 0.4315, 1.0, 0.0, 0.0, 0.0, *tuple(HI_25DOF_DEFAULT[name] for name in HI_25DOF_JOINT_NAMES)),
@@ -204,6 +239,7 @@ HI_25DOF_CFG = RobotCfg(
     hardware_joint_signs=(1.0,) * len(HI_25DOF_JOINT_NAMES),
     viewer_track_body_names=("base_link",),
     elastic_band_attach_body_names=("torso_link", "base_link"),
+    imu_body_names=("waist_yaw_link", "base_link"),
 )
 
 

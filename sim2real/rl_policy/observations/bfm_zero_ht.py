@@ -40,9 +40,10 @@ class _Spec:
     joint_names: tuple[str, ...]
     body_names: tuple[str, ...]
     extensions: tuple[tuple[str, str, tuple[float, float, float]], ...]
+    imu_body_name: str
     base_ang_vel_scale: float = 0.25
-    action_obs_scale: float = 32.0
-    action_obs_clip: float = 32.0
+    action_obs_scale: float | tuple[float, ...] = 32.0
+    action_obs_clip: float | tuple[float, ...] = 32.0
 
 
 PIPLUS_LSE_23DOF_SPEC = _Spec(
@@ -58,6 +59,7 @@ PIPLUS_LSE_23DOF_SPEC = _Spec(
         ("l_hand_link", "l_elbow_link", (0.0, 0.0, -0.129)),
         ("head_link", "head_pitch_link", (0.01, 0.0, 0.06)),
     ),
+    imu_body_name="waist_yaw_link",
 )
 HI_25DOF_SPEC = _Spec(
     label="Hi-25DoF",
@@ -68,6 +70,9 @@ HI_25DOF_SPEC = _Spec(
     joint_names=tuple(HI_25DOF_JOINT_NAMES),
     body_names=tuple(HI_25DOF_BFM_BODY_NAMES),
     extensions=(("head_link", "head_pitch_link", (0.01, 0.0, 0.06)),),
+    imu_body_name="waist_yaw_link",
+    action_obs_scale=(36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 3.0, 3.0, 36.0, 36.0, 36.0, 36.0, 8.0, 3.0, 36.0, 36.0, 36.0, 36.0, 8.0, 3.0),
+    action_obs_clip=(36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 3.0, 3.0, 36.0, 36.0, 36.0, 36.0, 8.0, 3.0, 36.0, 36.0, 36.0, 36.0, 8.0, 3.0),
 )
 
 
@@ -79,7 +84,15 @@ def _action_obs(action: np.ndarray, spec: _Spec) -> np.ndarray:
     action = np.asarray(action, dtype=np.float32).reshape(-1)
     if action.size != spec.action_dim:
         raise ValueError(f"{spec.label} action dim mismatch: {action.size} != {spec.action_dim}")
-    return np.clip(action * spec.action_obs_scale, -spec.action_obs_clip, spec.action_obs_clip).astype(np.float32)
+    scale = np.asarray(spec.action_obs_scale, dtype=np.float32)
+    clip = np.asarray(spec.action_obs_clip, dtype=np.float32)
+    if scale.ndim == 0:
+        scale = np.full(spec.action_dim, float(scale), dtype=np.float32)
+    if clip.ndim == 0:
+        clip = np.full(spec.action_dim, float(clip), dtype=np.float32)
+    if scale.shape != (spec.action_dim,) or clip.shape != (spec.action_dim,):
+        raise ValueError(f"{spec.label} action normalization shape mismatch")
+    return np.clip(action * scale, -clip, clip).astype(np.float32)
 
 
 def _projected_gravity_batch(root_quat_wxyz: np.ndarray) -> np.ndarray:
@@ -273,7 +286,8 @@ class _HTBackwardWindow(Observation):
         body_pos, body_quat = _append_extended_bodies(body_pos, body_quat, self.spec.body_names, self.spec)
         body_lin_vel, body_ang_vel, joint_vel = _compute_motion_velocities(body_pos, body_quat, dof_pos, fps=self.target_fps, sigma=2.0)
         target = slice(1, self.seq_length + 1)
-        state = np.concatenate([dof_pos[target] - self._default_joint_pos, joint_vel[target], _projected_gravity_batch(body_quat[target, 0]), body_ang_vel[target, 0]], axis=-1).astype(np.float32)
+        imu_idx = self.spec.body_names.index(self.spec.imu_body_name)
+        state = np.concatenate([dof_pos[target] - self._default_joint_pos, joint_vel[target], _projected_gravity_batch(body_quat[target, imu_idx]), body_ang_vel[target, imu_idx]], axis=-1).astype(np.float32)
         privileged = np.stack([_privileged_state(body_pos[index], body_quat[index], body_lin_vel[index], body_ang_vel[index], self.spec) for index in range(1, self.seq_length + 1)], axis=0)
         return {"state": state, "privileged_state": privileged}
 

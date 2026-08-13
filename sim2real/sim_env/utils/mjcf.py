@@ -121,6 +121,21 @@ def _add_joint_motor_actuator(
     spec.joint(joint_name).frictionloss = float(frictionloss)
 
 
+def _apply_joint_dynamics(spec: mujoco.MjSpec, robot_cfg: RobotCfg) -> None:
+    """Apply training-side armature/friction to XML joints already present."""
+    for joint_name in robot_cfg.joint_names:
+        try:
+            joint = spec.joint(joint_name)
+        except Exception:
+            continue
+        if joint is None:
+            continue
+        if joint_name in robot_cfg.joint_armature:
+            joint.armature = float(robot_cfg.joint_armature[joint_name])
+        if joint_name in robot_cfg.joint_frictionloss:
+            joint.frictionloss = float(robot_cfg.joint_frictionloss[joint_name])
+
+
 def ensure_joint_motor_actuators(
     spec: mujoco.MjSpec,
     robot_cfg: RobotCfg,
@@ -168,6 +183,7 @@ def load_sim_model(
     with _temp_scene_with_floor(mjcf_path) as scene_mjcf_path:
         spec = mujoco.MjSpec.from_file(str(scene_mjcf_path))
         added_joint_names = ensure_joint_motor_actuators(spec, robot_cfg)
+        _apply_joint_dynamics(spec, robot_cfg)
         if added_joint_names:
             logger.info(
                 "Added {} missing motor actuators to sim model: {}",

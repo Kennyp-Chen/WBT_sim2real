@@ -25,6 +25,7 @@ from sim2real.rl_policy.tracking import Tracking, TrackingArgs
 from sim2real.sim_env.utils.bridge import SimulationBridge
 from sim2real.sim_env.utils.mjcf import load_sim_model
 from sim2real.teleop.npz_pub import PublisherArgs, run_publish
+from sim2real.teleop.gem_bfmzero_pub import Args as GemBfmZeroPublisherArgs, prepare_gem_motion
 
 
 class _MotionFrameTap:
@@ -99,8 +100,8 @@ def _camera(
 @dataclass
 class Args:
     policy_config: str
-    motion_path: str
-    output: str
+    output: str | None = None
+    motion_path: str | None = None
     robot: str = "piplus_h0w"
     duration_s: float = 10.0
     fps: float = 30.0
@@ -121,6 +122,20 @@ class Args:
     camera_elevation: float = -20.0
     inference_backend: str = "onnx-cpu"
     seed: int = 0
+    gem_params: str | None = None
+    gem_output_dir: str | None = None
+
+
+def _default_output_path(robot_name: str) -> Path:
+    robot_dir = {
+        "g1": "G1_29dof",
+        "piplus_h0w": "Piplus_22dof",
+        "piplus_lse_23dof": "Piplus_23dof",
+        "hi_25dof": "Hi_25dof",
+    }.get(robot_name, robot_name)
+    return Path(
+        "outputs/policy_videos/bfm_zero"
+    ) / robot_dir / "zmq_full60s_dance2_subject2_side_by_side_sync.mp4"
 
 
 def _run_policy(policy: Tracking, stop_event: threading.Event) -> None:
@@ -150,8 +165,32 @@ def main(args: Args) -> None:
 
     np.random.seed(int(args.seed))
     robot_cfg = get_robot_cfg(args.robot)
-    motion_path = Path(args.motion_path).expanduser().resolve()
-    output_path = Path(args.output).expanduser().resolve()
+    if args.gem_params is not None and args.motion_path is not None:
+        raise ValueError("Pass either --motion-path or --gem-params, not both")
+    if args.gem_params is None and args.motion_path is None:
+        raise ValueError("One of --motion-path or --gem-params is required")
+    gem_publisher_args: GemBfmZeroPublisherArgs | None = None
+    if args.gem_params is not None:
+        gem_publisher_args = GemBfmZeroPublisherArgs(
+            gem_params=Path(args.gem_params).expanduser().resolve(),
+            robot=args.robot,
+            bind=args.motion_bind,
+            publish_hz=float(args.motion_publish_hz),
+            output_dir=(
+                Path(args.gem_output_dir).expanduser().resolve()
+                if args.gem_output_dir is not None
+                else None
+            ),
+            loop=bool(args.loop_motion),
+        )
+        motion_path = prepare_gem_motion(gem_publisher_args)
+    else:
+        motion_path = Path(args.motion_path).expanduser().resolve()
+    output_path = (
+        Path(args.output).expanduser().resolve()
+        if args.output is not None
+        else _default_output_path(robot_cfg.name).resolve()
+    )
     if not motion_path.is_file():
         raise FileNotFoundError(motion_path)
 
@@ -219,6 +258,7 @@ def main(args: Args) -> None:
     publisher_play = threading.Event()
     publisher_ready = threading.Event()
     root_body_name = "base_link" if "base_link" in robot_cfg.body_names else "pelvis"
+    publisher_target = run_publish
     publisher_args = PublisherArgs(
         motion_path=str(motion_path),
         robot=args.robot,
@@ -233,7 +273,7 @@ def main(args: Args) -> None:
         root_body_name=root_body_name,
     )
     publisher_thread = threading.Thread(
-        target=run_publish,
+        target=publisher_target,
         args=(publisher_args,),
         kwargs={
             "stop_event": publisher_stop,
