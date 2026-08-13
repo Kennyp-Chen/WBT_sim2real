@@ -1,0 +1,28 @@
+{
+  "actor": {
+    "actor_input_dim": 405,
+    "actor_input_dims": {
+      "history_actor": 324,
+      "last_action": 25,
+      "state": 56
+    },
+    "actor_input_keys": [
+      "state",
+      "last_action",
+      "history_actor"
+    ],
+    "actor_obs_dim": 661,
+    "output_action_dim": 25,
+    "z_dim": 256
+  },
+  "backward_encoder": {
+    "input_keys": [
+      "state",
+      "last_action",
+      "privileged_state"
+    ],
+    "path": "/home/sunteng/Projects/WBC_Telep/sim2real/checkpoints/bfm-zero/hi-25dof/FBcprAuxModel_z_encoder.onnx",
+    "z_dim": 256
+  },
+  "source_checkpoint": "/home/sunteng/Projects/BFM_WeightsAndData/bfmzero-h1-260402-isaac-20260812_124111"
+}
