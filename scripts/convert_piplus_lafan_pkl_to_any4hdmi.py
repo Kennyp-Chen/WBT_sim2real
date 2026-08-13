@@ -89,7 +89,8 @@ def _resample_qpos(
 
 
 def convert(
-    source_path: Path, output_root: Path, mjcf_path: Path, target_fps: float, robot: str
+    source_path: Path, output_root: Path, mjcf_path: Path, target_fps: float, robot: str,
+    include: list[str] | None = None,
 ) -> None:
     robot_cfg = get_robot_cfg(robot)
     joint_names = list(robot_cfg.joint_names)
@@ -104,6 +105,8 @@ def convert(
     entries: list[dict[str, object]] = []
 
     for source_name, payload in source.items():
+        if include and not any(token in str(source_name) for token in include):
+            continue
         if not isinstance(payload, dict):
             raise ValueError(f"Motion {source_name!r} is not a dict")
         source_joint_names = [str(name) for name in payload["joint_names"]]
@@ -202,8 +205,13 @@ def main() -> None:
     parser.add_argument("--mjcf", type=Path, required=True)
     parser.add_argument("--target-fps", type=float, default=50.0)
     parser.add_argument("--robot", type=str, default="piplus_h0w")
+    parser.add_argument(
+        "--include",
+        action="append",
+        help="Only convert source entries containing this token; repeat for multiple clips",
+    )
     args = parser.parse_args()
-    convert(args.source, args.output, args.mjcf, args.target_fps, args.robot)
+    convert(args.source, args.output, args.mjcf, args.target_fps, args.robot, args.include)
 
 
 if __name__ == "__main__":
