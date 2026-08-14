@@ -43,6 +43,7 @@ const sidebars: SidebarsConfig = {
         'tutorials/pico-teleoperation',
         'tutorials/motion-recording',
         'tutorials/run-external-policies',
+        'tutorials/piplus-lse-23dof-sim2real',
         'tutorials/gem-integration-plan',
         'piplus_bfmzero_sim2real',
       ],

@@ -161,6 +161,8 @@ final log reports nominal duration, wall duration, and recorder clock drift.
 
 For PiPlus hardware deployment, use the ROS2-to-ZMQ adapter and the complete
 state/command contract in [the PiPlus BFM-Zero sim2real guide](docs/piplus_bfmzero_sim2real.md).
+The separate [PiPlus-LSE 23-DoF guide](docs/tutorials/piplus-lse-23dof-sim2real.md)
+contains its non-identity hardware map, preflight launcher, and real-robot commands.
 
 ## Migrating to sim2real
 
@@ -181,6 +183,7 @@ Currently supported adapted / distributed checkpoint families:
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints. |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker. |
 | BFM-Zero PiPlus 22-DoF | `checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml` | PiPlus decoder and backward encoder merged into one semantic-input ONNX. |
+| BFM-Zero PiPlus-LSE 23-DoF | `checkpoints/bfm-zero/piplus-lse-23dof/policy.yaml` | PiPlus-LSE policy with a dedicated 23-DoF joint/body and hardware-order contract. |
 | ScaleBFM | `checkpoints/scalebfm` | ScaleBFM Humanoid Transformer M and XL ONNX exports from [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM). |
 | SONIC release | `checkpoints/sonic/release` | Release G1 and SMPL encoder variants. |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 and SMPL variants. |

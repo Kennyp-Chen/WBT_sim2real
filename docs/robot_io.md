@@ -93,9 +93,10 @@ Use `inline` for the normal real-robot deploy path. Use ZMQ bridge mode when
 you need process isolation, want to debug the policy and robot bridge
 separately, or are running sim2sim with `base_sim.py`.
 
-## PiPlus H0W BFM-Zero
+## PiPlus BFM-Zero
 
-PiPlus uses the same `LowStateMessage` / `LowCmdMessage` ZMQ contract, with the
+PiPlus 22-DoF H0W and 23-DoF LSE use the same `LowStateMessage` /
+`LowCmdMessage` ZMQ contract, with the
 ROS2 hardware adapter in `scripts/piplus/real_bridge.py`. The adapter owns the
 PiPlus-specific ROS joint order, `xyzw` to `wxyz` IMU conversion, motor-control
 services, and command safety clipping. The policy process remains unchanged.
@@ -107,5 +108,15 @@ uv run python sim2real/rl_policy/tracking.py \
   --policy-config checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml
 ```
 
+For PiPlus-LSE 23-DoF, use:
+
+```bash
+uv run python scripts/piplus/real_bridge.py --robot piplus_lse_23dof --dryrun
+uv run python scripts/piplus/bfmzero_23dof.py --preflight-only
+uv run python scripts/piplus/bfmzero_23dof.py
+```
+
 For the complete three-terminal deployment and the PiPlus BFM-Zero input
 contract, see [PiPlus BFM-Zero sim2real](./piplus_bfmzero_sim2real.md).
+The 23-DoF hardware map and deployment sequence are documented in
+[PiPlus-LSE 23-DoF BFM-Zero Sim2real](./tutorials/piplus-lse-23dof-sim2real.md).

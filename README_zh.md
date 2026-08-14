@@ -154,6 +154,8 @@ uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
 
 真实 PiPlus 部署请使用 ROS2 到 ZMQ 的 bridge；状态、关节映射和安全启动步骤见
 [PiPlus BFM-Zero sim2real 指南](docs/piplus_bfmzero_sim2real.md)。
+PiPlus-LSE 23-DoF 的非 identity 硬件映射、preflight 启动器和真机命令见
+[PiPlus-LSE 23-DoF 指南](docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/tutorials/piplus-lse-23dof-sim2real.md)。
 
 ## Migrating to sim2real
 
@@ -174,6 +176,7 @@ uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints。 |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker。 |
 | BFM-Zero PiPlus 22-DoF | `checkpoints/bfm-zero/piplus/bfmzero-piplus-h0w-isaac-20260807_204741/policy.yaml` | 将 PiPlus decoder 和 backward encoder 合并为一个语义输入 ONNX。 |
+| BFM-Zero PiPlus-LSE 23-DoF | `checkpoints/bfm-zero/piplus-lse-23dof/policy.yaml` | 使用独立的 23-DoF joint/body 和真实硬件顺序契约。 |
 | ScaleBFM | `checkpoints/scalebfm` | [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM) 的 Humanoid Transformer M 和 XL ONNX exports。 |
 | SONIC release | `checkpoints/sonic/release` | Release G1 和 SMPL encoder variants。 |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 和 SMPL variants。 |

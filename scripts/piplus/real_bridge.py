@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Bridge PiPlus ROS2 motor topics to the sim2real LowState/LowCmd ABI.
+"""Bridge PiPlus 22/23-DoF ROS2 topics to the sim2real LowState/LowCmd ABI.
 
-The policy process always sees the 22 joints in ``PIPLUS_H0W_JOINT_NAMES``
-order.  The ROS2 ``JointState`` and ``MotorControlCommand`` messages use the
-hardware order from instinct_onboard, so the conversion is deliberately kept
-here at the process boundary.
+The policy process always sees the canonical joint order from ``RobotCfg``.
+The ROS2 ``JointState`` and ``MotorControlCommand`` messages use the hardware
+order from instinct_onboard, so the conversion is deliberately kept here at
+the process boundary.
 
 ROS2 and ``hightorque_msgs`` are optional imports.  This keeps the pure mapping
 functions importable in CI and lets the bridge fail with a useful message when
@@ -44,6 +44,9 @@ except ImportError as exc:  # pragma: no cover
     _ROS_IMPORT_ERROR: Exception | None = exc
 else:  # pragma: no cover
     _ROS_IMPORT_ERROR = None
+
+
+SUPPORTED_ROBOTS = frozenset({"piplus_h0w", "piplus_lse_23dof"})
 
 
 def _named_or_indexed_values(
@@ -96,9 +99,15 @@ if Node is not None:  # pragma: no cover - exercised on the onboard ROS image.
             super().__init__(args.node_name)
             self.args = args
             self.robot_cfg = get_robot_cfg(args.robot)
-            if self.robot_cfg.name != "piplus_h0w":
-                raise ValueError("scripts/piplus/real_bridge.py only supports piplus_h0w")
+            if self.robot_cfg.name not in SUPPORTED_ROBOTS:
+                supported = ", ".join(sorted(SUPPORTED_ROBOTS))
+                raise ValueError(
+                    "scripts/piplus/real_bridge.py only supports PiPlus robot "
+                    f"configs: {supported}"
+                )
             validate_hardware_contract(self.robot_cfg)
+            if args.joint_pos_protect_ratio <= 0.0:
+                raise ValueError("joint_pos_protect_ratio must be positive")
             self.state = _LatestState()
             self._control_uuid: Any | None = None
             self._control_request = None
@@ -155,7 +164,9 @@ if Node is not None:  # pragma: no cover - exercised on the onboard ROS image.
                     dtype=np.float32,
                 )
                 midpoint = (lower + upper) * 0.5
-                protect_half_range = (upper - lower) * 0.5 * 1.5
+                protect_half_range = (
+                    (upper - lower) * 0.5 * self.args.joint_pos_protect_ratio
+                )
                 self._unsafe_joint_state = bool(
                     np.any(self.state.joint_positions < midpoint - protect_half_range)
                     or np.any(self.state.joint_positions > midpoint + protect_half_range)
@@ -163,7 +174,8 @@ if Node is not None:  # pragma: no cover - exercised on the onboard ROS image.
                 if self._unsafe_joint_state and not self._unsafe_joint_logged:
                     self._unsafe_joint_logged = True
                     self.get_logger().error(
-                        "PiPlus joint state exceeded the 1.5x protection range; "
+                        "PiPlus joint state exceeded the configured protection "
+                        f"range ({self.args.joint_pos_protect_ratio:.3f}x); "
                         "commands are inhibited."
                     )
                 self.state.tick += 1
@@ -313,6 +325,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cmd-port", type=int, default=5591)
     parser.add_argument("--publish-hz", type=float, default=50.0)
     parser.add_argument("--control-timeout-ms", type=int, default=5000)
+    parser.add_argument("--joint-pos-protect-ratio", type=float, default=1.0)
     parser.add_argument("--dryrun", action="store_true")
     return parser.parse_args()
 
