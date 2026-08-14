@@ -439,6 +439,23 @@ uv run python scripts/retarget_gem_smpl.py \
   --output-dir outputs/gem_retarget/tennis/piplus_h0w
 ```
 
+audio/speech checkpoint 可能生成视觉上像站立的人体手势，但其根部、腿部姿态或手臂
+幅度仍超出较小 PiPlus 策略的稳定分布。对于固定脚的站立手势，可显式启用机器人安全
+包络；不要把它用于 locomotion motion：
+
+```bash
+uv run python scripts/retarget_gem_smpl.py \
+  --gem-params outputs/gem_stream/music/smpl_params.pt \
+  --robot piplus_h0w \
+  --output-dir outputs/gem_retarget/music/piplus_h0w \
+  --stabilize-standing-base \
+  --standing-upper-body-scale 0.5
+```
+
+该模式把 floating root 和下肢关节固定到 `default_qpos`，只对默认姿态附近的生成
+上肢偏移缩放。它是显式的站立手势模式，不是 walking、jumping 或 dancing motion 的
+通用修复。
+
 验收条件：qpos 为配置 MuJoCo 顺序的 `[T,29]`；所有关节名与 YAML/MJCF 一致；FK body position/quaternion 有限且连续；已知动作与现有 PiPlus LAFAN 数据在数值或视觉上相符。
 
 ### GEM-009：PiPlus/G1 多模态 Sim2sim
@@ -469,6 +486,7 @@ uv run python scripts/retarget_gem_smpl.py \
 | 2026-08-14 | GEM-006 | 有序 text chunk | `scripts/gem_text_motion_stream.py --dry-run`；使用 tennis 预处理缓存的真实 prompt 尝试 | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 成功；唯一阻塞是本机缺少 Hugging Face `t5-3b`；有界 FIFO 和失败日志已验证 |
 | 2026-08-14 | GEM-007 | raw audio/music 输入 contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` 和 `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`、`outputs/gem_stream/music/real_attempt.pt` | 两种 60 帧真实 GEM 生成成功；audio chunk 已由 publisher 以 50 Hz 接收；实时采集、beat-aware transition、60 秒视频待完成 |
 | 2026-08-14 | GEM-007/009 | Kai Engel《Blizzard (PON I)》15 秒音乐 demo | PyAV 解码 -> `gem_audio_motion_stream.py` -> `retarget_gem_smpl.py` -> `record_zmq_policy_videos.py` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_g1_bfmzero.mp4`、`outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero.mp4` | 两段均为 450 帧、30 fps、15 秒；G1 全程保持站立且重定向关节越限为 0；PiPlus reference 有效但策略在中后段跌倒，PiPlus 音乐跟踪暂不验收 |
+| 2026-08-14 | GEM-007/009 | PiPlus 音乐跌倒隔离与站立安全包络 | 依次测试重复默认姿态、重复原始第 0 帧、锁定下肢，最后使用 `--stabilize-standing-base --standing-upper-body-scale 0.5` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero_standing_scale50_with_audio.mp4` | 默认姿态稳定；原始第 0 帧约 2 秒跌倒，仅在静态保持时恢复；全幅上肢动作仍在约 8 秒跌倒；50% 上肢版本在 2/5/8/12/14.5 秒均保持直立，reference 为 749 帧/50 Hz，关节越限为 0，并包含 15 秒 AAC 音轨 |
 
 ## 阻塞和所需输入
 

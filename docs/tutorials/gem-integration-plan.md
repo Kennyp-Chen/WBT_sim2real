@@ -532,6 +532,25 @@ uv run python scripts/retarget_gem_smpl.py \
   --output-dir outputs/gem_retarget/tennis/piplus_h0w
 ```
 
+Audio/speech checkpoints can generate visually standing human gestures whose
+root, leg pose, or arm amplitude is nevertheless outside the smaller PiPlus
+policy's stable distribution. For a fixed-foot standing gesture, opt into the
+robot safety envelope instead of applying it to locomotion motions:
+
+```bash
+uv run python scripts/retarget_gem_smpl.py \
+  --gem-params outputs/gem_stream/music/smpl_params.pt \
+  --robot piplus_h0w \
+  --output-dir outputs/gem_retarget/music/piplus_h0w \
+  --stabilize-standing-base \
+  --standing-upper-body-scale 0.5
+```
+
+This locks the floating root and lower-body joints to `default_qpos`, while
+scaling only the generated upper-body offsets around the default pose. It is an
+explicit standing-gesture mode, not a general fix for walking, jumping, or
+dancing motions.
+
 Acceptance criteria:
 
 - qpos is `[T,29]` in the configured MuJoCo order;
@@ -572,6 +591,7 @@ evidence.
 | 2026-08-14 | GEM-006 | ordered text chunks | `scripts/gem_text_motion_stream.py --dry-run`; real prompt attempt with cached tennis preprocessing | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 succeeded; inference is blocked only by missing local Hugging Face `t5-3b`; bounded FIFO and failure logging work |
 | 2026-08-14 | GEM-007 | raw audio/music input contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` and `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`, `outputs/gem_stream/music/real_attempt.pt` | both 60-frame real GEM generations succeeded; chunk publisher accepted the audio chunk at 50 Hz; live capture/beat-aware transition/60 s video remain |
 | 2026-08-14 | GEM-007/009 | Kai Engel, `Blizzard (PON I)` 15 s music demo | PyAV decode -> `gem_audio_motion_stream.py` -> `retarget_gem_smpl.py` -> `record_zmq_policy_videos.py` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_g1_bfmzero.mp4`, `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero.mp4` | both videos are 450 frames at 30 fps (15 s); G1 remained upright with zero retarget joint-limit violations; PiPlus reference was valid but policy fell in the middle/late portion, so PiPlus music tracking is not accepted yet |
+| 2026-08-14 | GEM-007/009 | PiPlus music fall isolation and standing envelope | repeated default pose, repeated original frame 0, locked lower body, then `--stabilize-standing-base --standing-upper-body-scale 0.5` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero_standing_scale50_with_audio.mp4` | default pose stayed stable; original frame 0 fell at about 2 s and recovered only when held; full-amplitude upper-body motion still fell near 8 s; the 50% upper-body version remained upright at 2/5/8/12/14.5 s, has 749 reference frames at 50 Hz, zero joint-limit violations, and a 15 s AAC soundtrack |
 
 ## Blockers and Required Inputs
 

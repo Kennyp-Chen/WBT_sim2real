@@ -27,6 +27,7 @@ PIPLUS_GMR_CONFIG = (
     REPO_ROOT / "sim2real/teleop/gmr_configs/smplx_to_piplus_h0w.json"
 )
 GMR_ROBOT_NAMES = {"g1": "unitree_g1", "piplus_h0w": "piplus_h0w"}
+LOWER_BODY_JOINT_TOKENS = ("hip", "thigh", "knee", "calf", "ankle")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -42,6 +43,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--target-fps", type=float, default=50.0)
     parser.add_argument("--max-frames", type=int, default=None)
     parser.add_argument("--ankle-height", type=float, default=0.055)
+    parser.add_argument(
+        "--stabilize-standing-base",
+        action="store_true",
+        help=(
+            "Lock the floating root and lower-body joints to the robot default "
+            "pose. Use for standing audio/speech gestures whose generated leg "
+            "motion is outside the tracking policy distribution."
+        ),
+    )
+    parser.add_argument(
+        "--standing-upper-body-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Scale unlocked upper-body offsets around the robot default pose; "
+            "requires --stabilize-standing-base and must be in [0, 1]."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -230,6 +249,48 @@ def _resample_qpos(qpos: np.ndarray, source_fps: float, target_fps: float) -> np
     return output
 
 
+def _stabilize_standing_base(
+    qpos: np.ndarray,
+    *,
+    default_qpos: np.ndarray,
+    joint_names: list[str],
+    upper_body_scale: float = 1.0,
+) -> tuple[np.ndarray, list[str]]:
+    """Keep generated upper-body motion on a stationary default support pose."""
+    output = np.asarray(qpos, dtype=np.float32).copy()
+    default = np.asarray(default_qpos, dtype=np.float32).reshape(-1)
+    expected_qpos_dim = 7 + len(joint_names)
+    if output.ndim != 2 or output.shape[1] != expected_qpos_dim:
+        raise ValueError(
+            f"Expected qpos [T, {expected_qpos_dim}], got {output.shape}"
+        )
+    if default.size != expected_qpos_dim:
+        raise ValueError(
+            f"Expected default_qpos dim {expected_qpos_dim}, got {default.size}"
+        )
+    if not 0.0 <= upper_body_scale <= 1.0:
+        raise ValueError("upper_body_scale must be in [0, 1]")
+
+    locked_joint_names = [
+        name
+        for name in joint_names
+        if any(token in name.lower() for token in LOWER_BODY_JOINT_TOKENS)
+    ]
+    if not locked_joint_names:
+        raise ValueError("No lower-body joints matched the standing-base filter")
+
+    output[:, :7] = default[:7]
+    locked_joint_set = set(locked_joint_names)
+    for joint_index, name in enumerate(joint_names, start=7):
+        if name in locked_joint_set:
+            output[:, joint_index] = default[joint_index]
+        else:
+            output[:, joint_index] = default[joint_index] + upper_body_scale * (
+                output[:, joint_index] - default[joint_index]
+            )
+    return output, locked_joint_names
+
+
 def _validate_limits(
     qpos: np.ndarray, model: mujoco.MjModel, joint_names: list[str]
 ) -> dict[str, float | int]:
@@ -328,6 +389,14 @@ def main() -> None:
     args = _parse_args()
     if args.source_fps <= 0 or args.target_fps <= 0:
         raise ValueError("source-fps and target-fps must be positive")
+    if not 0.0 <= args.standing_upper_body_scale <= 1.0:
+        raise ValueError("standing-upper-body-scale must be in [0, 1]")
+    if not args.stabilize_standing_base and not np.isclose(
+        args.standing_upper_body_scale, 1.0
+    ):
+        raise ValueError(
+            "standing-upper-body-scale requires --stabilize-standing-base"
+        )
     gem_path = args.gem_params.expanduser().resolve()
     output_dir = args.output_dir.expanduser().resolve()
     smplx_root = args.smplx_model_root.expanduser().resolve()
@@ -347,6 +416,14 @@ def main() -> None:
     robot_cfg = get_robot_cfg(args.robot)
     joint_names = list(robot_cfg.joint_names)
     joint_indices = _joint_qpos_indices(model, joint_names)
+    locked_joint_names: list[str] = []
+    if args.stabilize_standing_base:
+        qpos_source, locked_joint_names = _stabilize_standing_base(
+            qpos_source,
+            default_qpos=np.asarray(robot_cfg.default_qpos, dtype=np.float32),
+            joint_names=joint_names,
+            upper_body_scale=args.standing_upper_body_scale,
+        )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     motion_dir = output_dir / "motions"
@@ -384,6 +461,9 @@ def main() -> None:
             "gmr_robot": GMR_ROBOT_NAMES[args.robot],
             "gmr_config": str(PIPLUS_GMR_CONFIG) if args.robot == "piplus_h0w" else "GMR smplx_to_g1.json",
             "constant_root_z_offset": z_offset,
+            "stabilize_standing_base": bool(args.stabilize_standing_base),
+            "standing_upper_body_scale": args.standing_upper_body_scale,
+            "locked_joint_names": locked_joint_names,
         },
     )
     report = {
@@ -393,6 +473,9 @@ def main() -> None:
         "source_fps": source_fps,
         "target_fps": args.target_fps,
         "qpos_shape": list(qpos_target.shape),
+        "stabilize_standing_base": bool(args.stabilize_standing_base),
+        "standing_upper_body_scale": args.standing_upper_body_scale,
+        "locked_joint_names": locked_joint_names,
         "root_z_range": [float(qpos_target[:, 2].min()), float(qpos_target[:, 2].max())],
         "root_quat_norm_error": float(
             np.max(np.abs(np.linalg.norm(qpos_target[:, 3:7], axis=-1) - 1.0))
