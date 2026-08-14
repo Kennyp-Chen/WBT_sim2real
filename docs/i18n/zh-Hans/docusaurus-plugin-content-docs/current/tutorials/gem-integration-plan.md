@@ -26,7 +26,7 @@ slug: /tutorials/gem-integration-plan
 
 ## 进度账本
 
-最后更新：2026-08-12。
+最后更新：2026-08-13。
 
 | ID | 状态 | 交付物 | 证据 / 当前结果 |
 |---|---|---|---|
@@ -35,17 +35,19 @@ slug: /tutorials/gem-integration-plan
 | PRE-003 | 已完成 | PICO/XRobot SMPL publisher 和 GMR 腕部参考 | `pico_retarget_pub.py --publish-smpl` |
 | PRE-004 | 已完成 | PiPlus 22DoF BFM-Zero merged ONNX 和 observations | commit `7a3b2c6` |
 | PRE-005 | 已完成 | PiPlus NPZ/ZMQ 播放及同步视频录制 | 两个录制脚本 |
+| PRE-006 | 进行中 | HT PiPlus-LSE 23DoF 和 Hi 25DoF BFM-Zero contract/deploy artifacts | BFM-Zero observations、policy YAML/ONNX、MJCF 解析和动作工具已加入；两个机器人仍需完整 sim2sim 验证 |
 | GEM-000 | 已完成 | GEM 论文、项目及 runtime 调研 | GEM 报告；本地 clone 位于 `/home/sunteng/Projects/WBC_Telep/GENMO` |
-| GEM-001 | 进行中 | GEM `smpl_params.pt` 到 SONIC SMPL ZMQ publisher | 已开始 adapter；还需真实 GEM artifact 和 sim2sim |
-| GEM-002 | 进行中 | 录制视频 GEM inference 环境和 benchmark | GENMO 位于 `/home/sunteng/Projects/WBC_Telep/GENMO`；9 个 GEM/GVHMR checkpoint 文件均已下载并校验；只剩授权的 SMPL-X body model |
-| GEM-003 | 未开始 | GEM SMPL 到完整 G1 腕部重定向 | 尚无 GEM-SMPL-to-G1 GMR adapter |
-| GEM-004 | 未开始 | 录制视频 SONIC sim2sim 和对比视频 | 依赖 GEM-001 至 GEM-003 |
+| GEM-001 | 已完成 | GEM `smpl_params.pt` 到 SONIC SMPL ZMQ publisher | 已完成 Y-up SMPL 转换、50 Hz 重采样和十帧 future window 发布 |
+| GEM-002 | 已完成 | 录制视频 GEM inference 环境和 benchmark | 官方 tennis demo 生成 312 帧有限参数和四个渲染视频，位于 GENMO `outputs/gem_runs/tennis/` |
+| GEM-003 | 已完成 | GEM SMPL 到完整 G1 腕部重定向 | GMR 已生成 312 帧、29 关节顺序正确且无越限的 G1 reference |
+| GEM-004 | 进行中 | 录制视频 SONIC sim2sim 和对比视频 | 312 帧 ZMQ sim2sim 和三栏视频已通过视觉/时序检查；还缺定量 tracking/fall 报告 |
 | GEM-005 | 未开始 | 实时 webcam GEM-to-SONIC | 依赖录制视频验证 |
-| GEM-006 | 未开始 | 交互式 text-to-motion stream | 依赖稳定 SMPL stream 和 transition manager |
-| GEM-007 | 未开始 | music/audio-to-motion stream | 依赖特征提取和 transition manager |
-| GEM-008 | 未开始 | SMPL 到 PiPlus 22DoF retargeter | 需要 PiPlus mapping 和 IK 验证 |
-| GEM-009 | 未开始 | PiPlus BFM-Zero 多模态 sim2sim | 依赖 GEM-008 |
+| GEM-006 | 进行中 | 交互式 text-to-motion stream | GENMO 已支持 video/text 混合片段；仓库适配器和有界 chunk queue 正在加入 |
+| GEM-007 | 进行中 | music/audio-to-motion stream | GEM raw waveform audio conditioning 可用；文件适配器和时序检查正在加入 |
+| GEM-008 | 已完成 | SMPL 到 PiPlus 22DoF retargeter | PiPlus GMR mapping 输出 50 Hz `[519,29]`，无关节越限，any4hdmi contract 校验通过 |
+| GEM-009 | 进行中 | PiPlus/G1 BFM-Zero 多模态 sim2sim | 312 帧同步 ZMQ reference/policy 视频通过视觉时序和稳定性检查；还缺定量 tracking 报告 |
 | GEM-010 | 未开始 | 真机安全门和有限真机试验 | 依赖稳定 sim2sim 指标 |
+| GEM-011 | 延后 | HT PiPlus-LSE 23DoF 和 Hi 25DoF 的 GEM 重定向 | 必须在 G1 和 PiPlus 22DoF BFM-Zero sim2sim 完成后开始；不能假设 22/23/25DoF contract 可互换 |
 
 状态只使用“未开始、进行中、阻塞、已完成”。只有验收条件和证据都存在时才能标记已完成。
 
@@ -65,7 +67,23 @@ slug: /tutorials/gem-integration-plan
 - PiPlus 专用 observation 和 deploy YAML 已实现。
 - LAFAN 训练 pickle 可转换为 any4hdmi NPZ。
 - 已支持离线、ZMQ 和同步左右对比视频。
-- 当前缺少 SMPL 到 PiPlus reference 的重定向。
+- `scripts/retarget_gem_smpl.py` 和已纳入仓库的 PiPlus GMR mapping 已支持生成 any4hdmi reference。
+- `sim2real/teleop/npz_pub.py` 是已有的 canonical 机器人 motion ZMQ publisher，
+  默认使用 28701 端口；它回放 any4hdmi/NPZ qpos，并发布
+  `joint_pos`/`body_pos_w`/`body_quat_w`，供 `motion_backend=zmq` 使用。
+- `sim2real/teleop/gem_bfmzero_pub.py` 是 GEM 适配器：先运行一次 GMR，把
+  `smpl_params.pt` 转成 RobotCfg 顺序的 qpos，再按目标发布频率重采样、保存可复现
+  的 NPZ/manifest，最后委托给 `npz_pub`。
+
+### HT BFM-Zero 机器人
+
+- `piplus_lse_23dof` 和 `hi_25dof` 已注册各自的 joint/body contract 和
+  BFM-Zero observations；部署文件位于
+  `checkpoints/bfm-zero/{piplus-lse-23dof,hi-25dof}`。
+- 这两个机器人暂时不接入 GEM。先完成 G1 和 PiPlus 22DoF 的完整独立
+  sim2sim 验证，再分别加入机器人专用的 SMPL/GMR mapping 和 motion contract。
+- 不能复用 PiPlus 22DoF 的 GEM mapping，也不能静默补齐 action 维度：新策略是
+  23DoF 和 25DoF，body order 也不同。
 
 ### GEM
 
@@ -76,9 +94,10 @@ slug: /tutorials/gem-integration-plan
   `inputs/pretrained/` 和 `inputs/onnx/`；7 个 SHA-256 均与 NVIDIA GEM-X Hugging Face 元数据一致。
 - HMR2 与 ViTPose 原始 checkpoint 已从公开的 `camenduru/GVHMR` 镜像下载到
   `inputs/checkpoints/{hmr2,vitpose}/`，字节数和 SHA-256 与该镜像元数据一致。
-- `SMPLX_NEUTRAL.npz` 需要接受 SMPL-X 许可后获取；HMR2/ViTPose 原始 PyTorch
-  checkpoint 只由 GVHMR Google Drive 提供，目前该主机无法访问该地址。
-- 当前 workspace 中还没有 GEM 生成的真实 `smpl_params.pt`。
+- `SMPLX_NEUTRAL.npz` 已安装到 `inputs/checkpoints/body_models/smplx/`。
+- GEM 使用的 GVHMR body-model 小型运行时资源已安装到 `gem/utils/body_model/`。
+- 官方 tennis demo 输出位于 `/home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt`，包含 312 帧有限的全局位移、根姿态、body pose 和 shape。
+- GMR clone 位于 `/home/sunteng/Projects/WBC_Telep/GMR`，它只用于离线重定向，不是 policy 在线推理依赖。
 
 ## 目标架构
 
@@ -97,11 +116,132 @@ slug: /tutorials/gem-integration-plan
 
 所有来源最终都要进入一个公共动作记录：明确 source FPS、frame index、source timestamp、confidence/validity 和 segment boundary。策略相关的机器人重定向放在公共表示之后。
 
+## 当前 Tennis 录制链路的准确数据流
+
+下面是当前 tennis 实验真正跑通的流程。SONIC 和 BFM-Zero 两条分支使用的
+运行时接口不同，不能把它们简单看成同一个 publisher。
+
+### 1. 人类视频到 GEM 参数
+
+```text
+GENMO/inputs/demo/tennis.mp4
+    -> GEM 录制视频推理
+    -> outputs/gem_runs/tennis/smpl_params.pt
+```
+
+GEM 文件是逐帧 SMPL-X 参数记录，不是机器人轨迹，也不是策略 action。当前
+文件有 312 帧，字段如下：
+
+| 字段 | 形状 | 含义 |
+|---|---:|---|
+| `body_params_global.body_pose` | `[T,63]` | 21 个非根 SMPL 身体关节的 local axis-angle 旋转 |
+| `body_params_global.global_orient` | `[T,3]` | SMPL 根部 axis-angle 旋转 |
+| `body_params_global.transl` | `[T,3]` | 根部全局平移 |
+| `body_params_global.betas` | `[T,10]` | SMPL-X 身体形状系数 |
+| `body_params_incam.*` | 同上 | 相机坐标系下的对应参数 |
+| `K_fullimg` | `[T,3,3]` | 每帧相机内参 |
+
+本实验将输入时钟按 30 Hz 处理。原始视频元数据约为 29.83 Hz，因此严格的
+原始时间戳重建属于后续改进项。
+
+### 2. SONIC 分支：SMPL-ZMQ 到 G1 策略
+
+```text
+smpl_params.pt
+    -> gem_smpl_pub.py
+       - SONIC canonical SMPL FK
+       - Y-up/根坐标系转换
+       - GMR 生成 G1 腕部 reference
+       - 30 Hz -> 50 Hz 重采样
+       - 10 帧 future window
+    -> ZMQ tcp://*:28702
+    -> Tracking(motion_backend=smpl_zmq)
+    -> SONIC SMPL ONNX
+    -> 29 关节 action -> PD torque -> G1 MuJoCo / 真机
+```
+
+`gem_smpl_pub.py` 使用 GEM 的身体旋转生成 SONIC canonical 字段
+`smpl_joint_pos_root [N,24,3]` 和 `smpl_root_quat_w [N,4]`。相机内参不会发给
+策略。由于 SONIC encoder 需要 G1 的 wrist roll/pitch/yaw，而不是 SMPL wrist
+位置，所以六个机器人腕部角度由 GMR 单独提供。publisher 在发送前，使用
+SLERP 插值旋转、线性插值位置和机器人关节 reference，将全部数据重采样到
+SONIC 的 50 Hz 控制时钟，并发送 future window。
+
+策略接收当前 G1 proprioception 和未来 SMPL 窗口。部署输出是 29 关节 action
+（以及 checkpoint 在适用时的 token/state 输出）；controller 再把 action 转成
+关节目标和 MuJoCo/机器人 torque。`tennis_source_g1_reference_sonic.mp4`
+展示了原始视频、GMR reference 和 SONIC 执行结果。
+
+### 3. BFM-Zero 分支：SMPL-to-G1 NPZ 到策略
+
+```text
+smpl_params.pt
+    -> scripts/retarget_gem_smpl.py --robot g1
+       - 完整 SMPL-X global parameters
+       - GMR SMPL-X -> G1 IK
+       - 根部 XY 归一化和 MJCF 校验
+    -> outputs/gem_retarget/tennis/g1/motions/tennis.npz [312,36] @ 30 Hz
+    -> any4hdmi loader 重采样到 50 Hz [519,36]
+       并计算 reference body FK/速度
+    -> integrated_sim2sim.py + BFM-Zero ONNX
+    -> 29 关节 action -> PD torque -> G1 MuJoCo / 真机
+```
+
+离线录制使用 `motion_backend=npz`：策略运行时按照配置的 50 Hz target FPS
+加载 30 Hz NPZ，因此内部运动序列是 519 帧；视频写入仍然是 30 fps，所以视频
+有 312 帧。
+
+BFM-Zero 接收的是机器人 proprioception/history 和未来 G1 reference window，
+不会直接接收原始 SMPL 字段或 `smpl_params.pt`。
+
+当前三栏视频是：
+`outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4`。
+
+现在 GEM 到 BFM-Zero 的 canonical 录制 ZMQ 链路是：
+
+```text
+smpl_params.pt
+    -> gem_bfmzero_pub.py
+       - GMR SMPL-X -> RobotCfg qpos
+       - qpos 重采样到 50 Hz
+       - 可复现的 any4hdmi NPZ
+    -> tcp://*:28701 上的 npz_pub schema
+    -> Tracking(motion_backend=zmq)
+    -> BFM-Zero ONNX -> robot action/torque
+```
+
+直接运行适配器：
+
+```bash
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
+uv run python sim2real/teleop/gem_bfmzero_pub.py \
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --robot g1 --bind 'tcp://*:28701'
+```
+
+同步录制脚本现在既接受已有 NPZ，也接受 GEM 参数：
+
+```bash
+MUJOCO_GL=egl HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
+uv run python scripts/tracking_experiment/record_zmq_policy_videos.py \
+  --policy-config checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml \
+  --robot g1 \
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --motion-bind 'tcp://*:28712' \
+  --motion-connect 'tcp://127.0.0.1:28712' \
+  --output outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4
+```
+
+当前三栏视频是：
+`outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4`。
+最右侧现在来自 BFM-Zero ZMQ 运行，并且和 SONIC reference 窗口一样使用 640×720
+渲染比例。
+
 ## 阶段一：录制视频到 SONIC
 
 ### GEM-001：通用 GEM SMPL Publisher
 
-目标：读取官方 GEM `smpl_params.pt`，把 global body parameters 转换成现有 SONIC SMPL contract，并按 source FPS 在 28702 端口播放。
+目标：读取官方 GEM `smpl_params.pt`，把 global body parameters 转换成现有 SONIC SMPL contract，并按 SONIC 的 50 Hz 控制时钟在 28702 端口播放。
 
 实现要求：
 
@@ -138,7 +278,7 @@ slug: /tutorials/gem-integration-plan
 
 验收条件：记录命令、源视频、准确 checkpoint、GEM commit、GPU、耗时、峰值显存和输出路径；`smpl_params.pt` 全程有限值；渲染结果持续跟踪同一人物。
 
-当前缺少的外部文件：根据 SMPL-X 许可证从官方获取的 `SMPLX_NEUTRAL.npz`。
+授权的 `SMPLX_NEUTRAL.npz` 已安装，并用于 tennis 推理。
 
 ### GEM-003：完整 G1 腕部重定向
 
@@ -150,11 +290,33 @@ slug: /tutorials/gem-integration-plan
 
 ### GEM-004：录制视频 SONIC Sim2sim
 
+首次在可以访问 GitHub 时安装 GMR 依赖，然后生成 G1 腕部 reference。安装完成后，
+重定向和策略推理均可离线运行：
+
+```bash
+uv sync --extra retarget
+uv run python scripts/retarget_gem_smpl.py \
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --robot g1 --target-fps 30 \
+  --output-dir outputs/gem_retarget/tennis/g1
+```
+
 三个终端：
 
 ```bash
 uv run python sim2real/teleop/gem_smpl_pub.py \
-  --gem-params /absolute/path/to/smpl_params.pt
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --joint-reference outputs/gem_retarget/tennis/g1/tennis_joint_reference.npz
+```
+
+一条命令录制同步结果：
+
+```bash
+MUJOCO_GL=egl uv run python scripts/tracking_experiment/record_gem_sonic_video.py \
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --joint-reference outputs/gem_retarget/tennis/g1/tennis_joint_reference.npz \
+  --reference-motion outputs/gem_retarget/tennis/g1/motions/tennis.npz \
+  --output outputs/gem_retarget/tennis/policy_videos/sonic_release_smpl/tennis.mp4
 ```
 
 ```bash
@@ -200,9 +362,16 @@ uv run sim2real/rl_policy/tracking.py \
 
 追踪 PiPlus 训练动作表示，实现可复用 retargeter，输出 backward encoder 使用的精确 22DoF 顺序和 root/body frame。策略推理前先通过 PiPlus MJCF 验证 qpos。
 
+```bash
+uv run python scripts/retarget_gem_smpl.py \
+  --gem-params /home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt \
+  --robot piplus_h0w \
+  --output-dir outputs/gem_retarget/tennis/piplus_h0w
+```
+
 验收条件：qpos 为配置 MuJoCo 顺序的 `[T,29]`；所有关节名与 YAML/MJCF 一致；FK body position/quaternion 有限且连续；已知动作与现有 PiPlus LAFAN 数据在数值或视觉上相符。
 
-### GEM-009：PiPlus 多模态 Sim2sim
+### GEM-009：PiPlus/G1 多模态 Sim2sim
 
 通过现有 normal ZMQ BFM-Zero 链路输入重定向动作，复用同步录制脚本，把源视频、重定向 reference 和 policy simulation 放到同一时间线。
 
@@ -221,16 +390,19 @@ uv run sim2real/rl_policy/tracking.py \
 | 2026-08-12 | GEM-000 | NVlabs/GENMO `16bebf4` | 仓库检查 | GEM 报告 | 已确认 video/text 官方 demo、audio/music 模型支持和 webcam ONNX |
 | 2026-08-12 | PRE-004 | PiPlus BFM-Zero | commit `7a3b2c6` | PiPlus policy/video workflow | GEM 工作开始前已集成并 push |
 | 2026-08-12 | GEM-002 | NVIDIA GEM-X HF 镜像 + `camenduru/GVHMR` + GENMO `16bebf4` | 可续传 `wget -c` | `/home/sunteng/Projects/WBC_Telep/GENMO/inputs/{pretrained,onnx,checkpoints}` | 9/9 文件完成，哈希已校验；只剩授权的 `SMPLX_NEUTRAL.npz` |
+| 2026-08-13 | GEM-002 | PiPlus `jumps1_subject1_...clip0.mp4` | `demo_smpl_hpe.py --no_render --ckpt_path inputs/pretrained/gem_smpl.ckpt` | `outputs/gem_runs/jumps1_subject1_20260806_PiPlus_S_12L8A0G2H0W_LSE_ZedMini_260804_clip0/{smpl_params.pt,0_kp2d_overlay.mp4}` | 300 帧；22.8 秒；global/incam body tensor 和相机内参全部有限；渲染推迟 |
+| 2026-08-13 | GEM-002 | GVHMR 官方 `tennis.mp4` demo | GEM 录制视频推理和渲染 | `/home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/` | 312 帧有限参数；保存 `0_kp2d_overlay`、`1_incam`、`2_global`、`3_incam_global_horiz` |
+| 2026-08-13 | GEM-003/008 | tennis `smpl_params.pt` | `scripts/retarget_gem_smpl.py` + GMR | `outputs/gem_retarget/tennis/{g1,piplus_h0w}` | G1 `[312,36]`/30 Hz；PiPlus `[519,29]`/50 Hz；根四元数归一化，关节越限为 0 |
+| 2026-08-13 | GEM-004 | tennis GEM + G1 GMR reference | `record_gem_sonic_video.py`、release SMPL policy | `outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_sonic.mp4` | 312 帧/30 fps；源 0.000 秒开始，policy 0.220 秒启动；无 shape/NaN/runtime 错误，视觉稳定 |
+| 2026-08-13 | GEM-009 | tennis PiPlus GMR reference | `record_zmq_policy_videos.py`、PiPlus BFM-Zero | `outputs/gem_retarget/tennis/comparisons/tennis_source_piplus_reference_bfmzero.mp4` | 312 帧/30 fps；源 0.000 秒开始，policy 0.180 秒启动；reference/policy 同步且保持站立 |
+| 2026-08-13 | GEM-009 | tennis GEM -> G1 BFM-Zero robot-motion ZMQ | `record_zmq_policy_videos.py --gem-params`、`gem_bfmzero_pub.py`、BFM-Zero G1 policy | `outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4`、`outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4` | 312 帧/30 fps；GMR qpos 30 Hz，NPZ/ZMQ 50 Hz；`motion_backend=zmq` 收到 29 joints/33 bodies；wall drift +0.371 秒；视觉稳定 |
 
 ## 阻塞和所需输入
 
-真实 GEM inference 当前的外部阻塞：
+录制视频链路已无外部阻塞。进入实时摄像头或真机前，先为两个现有录制补充
+root/body tracking 与跌倒定量指标，再实现摄像头 confidence/dropout 处理。
 
-- 本地不存在 `SMPLX_NEUTRAL.npz`，需要按照官方 SMPL-X 许可获取。
-- 录制视频路径引用的 `epoch=10-step=25000.ckpt` 与 `vitpose-h-multi-coco.pth`
-  已通过公开 GVHMR 镜像获取；webcam pipeline 所需的 ONNX 也已完整下载。
-
-后续可能需要：一段单人全身清楚可见的短视频；计划支持的语言 prompt 和动作安全词表；用于离线复现的音乐文件；若训练团队已有 PiPlus SMPL/robot retarget 配置，也需要提供。
+后续需要：代表性的实时摄像头输入、计划支持的语言 prompt 和动作安全词表，以及用于离线复现的音乐文件。
 
 ## 随时恢复入口
 
@@ -238,6 +410,20 @@ uv run sim2real/rl_policy/tracking.py \
 
 1. 阅读上面的进度账本，选择第一个“进行中”项目。
 2. 检查 `git status`，保留无关的用户文件。
-3. GEM-001：检查 `sim2real/teleop/gem_smpl_pub.py` 和测试，再运行文档中的验证命令。
-4. GEM-002：先检查 `/home/sunteng/Projects/WBC_Telep/GENMO/inputs/checkpoints/body_models/smplx/SMPLX_NEUTRAL.npz` 是否存在。
-5. 每个真实运行先写入实验记录，再把任务标为“已完成”。
+3. 为两个同步录制器补充定量 tracking/fall 报告，完成 GEM-004/GEM-009。
+4. 重跑上面的 tennis artifact，并将数值报告和现有视频对照。
+5. 继续使用下面的有界 adapter 推进 GEM-006/GEM-007；每个真实运行都追加到本表。
+6. 在 G1 和 PiPlus 22DoF BFM-Zero sim2sim 验收完成前，不要开始 GEM-011。
+
+## 延后最终阶段：新 HT 机器人的 GEM
+
+`piplus_lse_23dof` 和 `hi_25dof` 的 GEM 接入明确放在机器人相关计划的最后。
+开始前必须完成：
+
+1. 两个新策略各自的离线和 ZMQ sim2sim；
+2. final-frame、跌倒、root tracking 和 action-limit 检查；
+3. 确认各自训练时实际使用的 MJCF body order 和 motion FPS；
+4. 为每个机器人单独建立 GMR/SMPL mapping 和 any4hdmi manifest。
+
+G1 或 PiPlus 22DoF GEM 跑通只能证明公共架构可行，不能证明新机器人的
+observation 或 joint order 可以直接复用。

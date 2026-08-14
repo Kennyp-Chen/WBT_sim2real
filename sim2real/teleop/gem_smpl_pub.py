@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
 import time
 from typing import Any
 
@@ -18,6 +19,7 @@ import numpy as np
 import torch
 import tyro
 import zmq
+from scipy.spatial.transform import Rotation, Slerp
 
 from sim2real.config.robots import get_robot_cfg
 from sim2real.teleop.smpl_stream import (
@@ -122,6 +124,72 @@ def convert_gem_params(
     }, fps
 
 
+def resample_sonic_motion(
+    motion: dict[str, np.ndarray],
+    *,
+    source_fps: float,
+    target_fps: float,
+) -> dict[str, np.ndarray]:
+    """Resample GEM frames to the SONIC control clock without axis-angle lerp."""
+    if source_fps <= 0 or target_fps <= 0:
+        raise ValueError("source_fps and target_fps must be positive")
+    source_frames = int(motion["smpl_body_pose_aa"].shape[0])
+    if source_frames <= 1 or np.isclose(source_fps, target_fps):
+        return {key: value.copy() for key, value in motion.items()}
+
+    duration = (source_frames - 1) / float(source_fps)
+    target_frames = int(round(duration * target_fps)) + 1
+    source_time = np.arange(source_frames, dtype=np.float64) / float(source_fps)
+    target_time = np.arange(target_frames, dtype=np.float64) / float(target_fps)
+    target_time[-1] = min(target_time[-1], source_time[-1])
+
+    body_pose = np.asarray(motion["smpl_body_pose_aa"], dtype=np.float32)
+    body_pose_out = np.empty((target_frames, 21, 3), dtype=np.float32)
+    for joint_index in range(21):
+        rotations = Rotation.from_rotvec(body_pose[:, joint_index])
+        body_pose_out[:, joint_index] = (
+            Slerp(source_time, rotations)(target_time).as_rotvec().astype(np.float32)
+        )
+
+    root_quat = np.asarray(motion["smpl_root_quat_w"], dtype=np.float32)
+    root_xyzw = Slerp(
+        source_time,
+        Rotation.from_quat(root_quat[:, [1, 2, 3, 0]]),
+    )(target_time).as_quat()
+    root_quat_out = root_xyzw[:, [3, 0, 1, 2]].astype(np.float32)
+
+    joint_pos_source = np.asarray(motion["joint_pos"], dtype=np.float32)
+    joint_pos_out = np.stack(
+        [
+            np.interp(target_time, source_time, joint_pos_source[:, column])
+            for column in range(joint_pos_source.shape[1])
+        ],
+        axis=-1,
+    ).astype(np.float32)
+    joint_vel_out = np.gradient(joint_pos_out, 1.0 / target_fps, axis=0).astype(
+        np.float32
+    )
+
+    smpl_joint_source = np.asarray(
+        motion["smpl_joint_pos_root"], dtype=np.float32
+    ).reshape(source_frames, -1)
+    smpl_joint_pos_root_out = np.stack(
+        [
+            np.interp(target_time, source_time, smpl_joint_source[:, column])
+            for column in range(smpl_joint_source.shape[1])
+        ],
+        axis=-1,
+    ).reshape(target_frames, 24, 3).astype(np.float32)
+
+    return {
+        "smpl_body_pose_aa": body_pose_out,
+        "smpl_joint_pos_root": smpl_joint_pos_root_out,
+        "smpl_root_quat_w": root_quat_out,
+        "joint_pos": joint_pos_out,
+        "joint_vel": joint_vel_out,
+    }
+
+
 @dataclass
 class Args:
     gem_params: Path
@@ -129,13 +197,20 @@ class Args:
     robot: str = "g1"
     human_joints_info: Path = Path(DEFAULT_HUMAN_JOINTS_INFO_PATH)
     joint_reference: Path | None = None
-    future_frames: int = 4
+    target_fps: float = 50.0
+    future_frames: int = 10
     max_frames: int | None = None
     loop: bool = False
     dry_run: bool = False
 
 
-def main(args: Args) -> None:
+def run_publish(
+    args: Args,
+    *,
+    stop_event: threading.Event | None = None,
+    play_event: threading.Event | None = None,
+    ready_event: threading.Event | None = None,
+) -> None:
     robot_cfg = get_robot_cfg(args.robot)
     motion, fps = convert_gem_params(
         args.gem_params.expanduser().resolve(),
@@ -143,6 +218,14 @@ def main(args: Args) -> None:
         joint_reference=args.joint_reference.expanduser().resolve() if args.joint_reference else None,
         robot=args.robot,
     )
+    if not np.isclose(fps, args.target_fps):
+        motion = resample_sonic_motion(
+            motion,
+            source_fps=fps,
+            target_fps=float(args.target_fps),
+        )
+        print(f"[gem-smpl-pub] resampled {fps:g} Hz -> {args.target_fps:g} Hz")
+        fps = float(args.target_fps)
     frames = motion["smpl_body_pose_aa"].shape[0]
     count = min(frames, args.max_frames) if args.max_frames is not None else frames
     if args.future_frames <= 0 or count <= 0:
@@ -158,12 +241,19 @@ def main(args: Args) -> None:
     socket.setsockopt(zmq.LINGER, 0)
     socket.setsockopt(zmq.SNDHWM, 1)
     socket.bind(args.bind)
+    if ready_event is not None:
+        ready_event.set()
     time.sleep(0.25)
+    if play_event is not None:
+        while not play_event.wait(timeout=0.05):
+            if stop_event is not None and stop_event.is_set():
+                socket.close(linger=0)
+                return
     period = 1.0 / fps
     frame = 0
     deadline = time.monotonic()
     try:
-        while True:
+        while stop_event is None or not stop_event.is_set():
             indices = np.minimum(np.arange(frame, frame + args.future_frames), count - 1)
             now_ns = time.time_ns()
             payload = {key: value[indices] for key, value in motion.items()}
@@ -182,6 +272,10 @@ def main(args: Args) -> None:
             time.sleep(max(0.0, deadline - time.monotonic()))
     finally:
         socket.close(linger=0)
+
+
+def main(args: Args) -> None:
+    run_publish(args)
 
 
 if __name__ == "__main__":

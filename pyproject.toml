@@ -23,6 +23,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+retarget = [
+    "general-motion-retargeting @ git+https://github.com/EGalahad/GMR.git@codex/add-pyproject-toml",
+]
 inference-cpu = [
     "onnxruntime",
 ]
