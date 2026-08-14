@@ -126,7 +126,8 @@ task `Done` only after its acceptance criteria and evidence are present.
 - `scripts/gem_audio_motion_stream.py` constructs the exact model input contract
   for a recorded audio file (mono 18 kHz waveform, 600 samples per 30 Hz frame)
   or an existing `[T,35]` GEM `music_embed`. It writes a normal GEM-style
-  `smpl_params.pt` for the existing retargeters.
+  `smpl_params.pt` for the existing retargeters. With PyAV installed it also
+  decodes MP3/WAV without a system `ffmpeg` executable.
 - `sim2real/teleop/gem_chunk_pub.py` watches completed text/audio chunk files and
   publishes them sequentially on the existing SONIC SMPL endpoint `28702`.
   It does not publish a partial `.tmp.pt` file and it preserves chunk order.
@@ -570,6 +571,7 @@ evidence.
 | 2026-08-13 | GEM-009 | tennis GEM -> G1 BFM-Zero robot-motion ZMQ | `record_zmq_policy_videos.py --gem-params`, `gem_bfmzero_pub.py`, BFM-Zero G1 policy | `outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4`, `outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4` | 312 frames at 30 fps; GMR qpos at 30 Hz, NPZ/ZMQ at 50 Hz; `motion_backend=zmq` received 29 joints/33 bodies; wall drift +0.371 s; visual stability passed |
 | 2026-08-14 | GEM-006 | ordered text chunks | `scripts/gem_text_motion_stream.py --dry-run`; real prompt attempt with cached tennis preprocessing | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 succeeded; inference is blocked only by missing local Hugging Face `t5-3b`; bounded FIFO and failure logging work |
 | 2026-08-14 | GEM-007 | raw audio/music input contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` and `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`, `outputs/gem_stream/music/real_attempt.pt` | both 60-frame real GEM generations succeeded; chunk publisher accepted the audio chunk at 50 Hz; live capture/beat-aware transition/60 s video remain |
+| 2026-08-14 | GEM-007/009 | Kai Engel, `Blizzard (PON I)` 15 s music demo | PyAV decode -> `gem_audio_motion_stream.py` -> `retarget_gem_smpl.py` -> `record_zmq_policy_videos.py` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_g1_bfmzero.mp4`, `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero.mp4` | both videos are 450 frames at 30 fps (15 s); G1 remained upright with zero retarget joint-limit violations; PiPlus reference was valid but policy fell in the middle/late portion, so PiPlus music tracking is not accepted yet |
 
 ## Blockers and Required Inputs
 

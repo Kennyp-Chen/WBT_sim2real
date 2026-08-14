@@ -27,36 +27,65 @@ def _load_audio(path: Path, target_sr: int = 18000) -> tuple[torch.Tensor, int]:
     if librosa is not None:
         waveform, _ = librosa.load(str(path.expanduser().resolve()), sr=target_sr, mono=True)
     else:
-        if path.suffix.lower() != ".wav":
-            raise RuntimeError(
-                "librosa is required for non-WAV audio; install it in the GENMO environment"
-            )
-        import wave
+        try:
+            import av
+        except ImportError:
+            av = None
+        if av is not None:
+            # PyAV handles WAV, MP3, FLAC, and common container codecs without
+            # requiring a system ffmpeg executable.
+            samples: list[np.ndarray] = []
+            source_rates: set[int] = set()
+            with av.open(str(path.expanduser().resolve())) as container:
+                for frame in container.decode(audio=0):
+                    array = frame.to_ndarray()
+                    if array.ndim == 2:
+                        array = array.mean(axis=0)
+                    samples.append(np.asarray(array, dtype=np.float32))
+                    if frame.sample_rate:
+                        source_rates.add(int(frame.sample_rate))
+            if not samples or len(source_rates) != 1:
+                raise ValueError(f"Could not decode a single-rate audio stream: {path}")
+            waveform = np.concatenate(samples)
+            source_sr = source_rates.pop()
+            if source_sr != target_sr:
+                from scipy.signal import resample_poly
 
-        from scipy.signal import resample_poly
-
-        with wave.open(str(path.expanduser().resolve()), "rb") as stream:
-            source_sr = int(stream.getframerate())
-            channels = int(stream.getnchannels())
-            sample_width = int(stream.getsampwidth())
-            frame_count = int(stream.getnframes())
-            raw = stream.readframes(frame_count)
-        if sample_width == 1:
-            waveform = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
-            waveform = (waveform - 128.0) / 128.0
-        elif sample_width == 2:
-            waveform = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
-        elif sample_width == 4:
-            waveform = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
+                divisor = int(np.gcd(source_sr, target_sr))
+                waveform = resample_poly(
+                    waveform, target_sr // divisor, source_sr // divisor
+                ).astype(np.float32)
         else:
-            raise ValueError(f"Unsupported WAV sample width: {sample_width} bytes")
-        if channels > 1:
-            waveform = waveform.reshape(-1, channels).mean(axis=1)
-        if source_sr != target_sr:
-            divisor = int(np.gcd(source_sr, target_sr))
-            waveform = resample_poly(
-                waveform, target_sr // divisor, source_sr // divisor
-            ).astype(np.float32)
+            if path.suffix.lower() != ".wav":
+                raise RuntimeError(
+                    "librosa or PyAV is required for non-WAV audio; install one in the GENMO environment"
+                )
+            import wave
+
+            from scipy.signal import resample_poly
+
+            with wave.open(str(path.expanduser().resolve()), "rb") as stream:
+                source_sr = int(stream.getframerate())
+                channels = int(stream.getnchannels())
+                sample_width = int(stream.getsampwidth())
+                frame_count = int(stream.getnframes())
+                raw = stream.readframes(frame_count)
+            if sample_width == 1:
+                waveform = np.frombuffer(raw, dtype=np.uint8).astype(np.float32)
+                waveform = (waveform - 128.0) / 128.0
+            elif sample_width == 2:
+                waveform = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+            elif sample_width == 4:
+                waveform = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648.0
+            else:
+                raise ValueError(f"Unsupported WAV sample width: {sample_width} bytes")
+            if channels > 1:
+                waveform = waveform.reshape(-1, channels).mean(axis=1)
+            if source_sr != target_sr:
+                divisor = int(np.gcd(source_sr, target_sr))
+                waveform = resample_poly(
+                    waveform, target_sr // divisor, source_sr // divisor
+                ).astype(np.float32)
     waveform = np.asarray(waveform, dtype=np.float32)
     if waveform.ndim != 1 or waveform.size == 0:
         raise ValueError(f"Audio file is empty or not mono: {path}")
@@ -179,6 +208,12 @@ def build_condition_data(args: argparse.Namespace) -> tuple[dict[str, object], i
 
 def main() -> None:
     args = _parse_args()
+    # Resolve destinations before changing cwd to GENMO for its relative
+    # body-model/config assets.
+    if args.output is not None:
+        args.output = args.output.expanduser().resolve()
+    if args.output_dir is not None:
+        args.output_dir = args.output_dir.expanduser().resolve()
     data, frames = build_condition_data(args)
     if args.dry_run:
         destination = args.output if args.output is not None else args.output_dir

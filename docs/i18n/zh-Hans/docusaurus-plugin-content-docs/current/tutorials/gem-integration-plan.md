@@ -109,6 +109,7 @@ slug: /tutorials/gem-integration-plan
 - `scripts/gem_audio_motion_stream.py` 构造模型实际需要的输入：录制音频必须是
   mono 18 kHz waveform（每个 30 Hz motion frame 对应 600 samples），或者已有的
   `[T,35]` GEM `music_embed`。输出是普通 GEM `smpl_params.pt`，可复用现有 retargeter。
+  安装 PyAV 后还可以直接解码 MP3/WAV，不依赖系统 `ffmpeg` 可执行文件。
 - `sim2real/teleop/gem_chunk_pub.py` 监听已完成的 text/audio chunk，按顺序发布到
   已有的 SONIC SMPL 28702 端口，不读取 `.tmp.pt`，也不打乱 chunk 顺序。
 
@@ -467,6 +468,7 @@ uv run python scripts/retarget_gem_smpl.py \
 | 2026-08-13 | GEM-009 | tennis GEM -> G1 BFM-Zero robot-motion ZMQ | `record_zmq_policy_videos.py --gem-params`、`gem_bfmzero_pub.py`、BFM-Zero G1 policy | `outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4`、`outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4` | 312 帧/30 fps；GMR qpos 30 Hz，NPZ/ZMQ 50 Hz；`motion_backend=zmq` 收到 29 joints/33 bodies；wall drift +0.371 秒；视觉稳定 |
 | 2026-08-14 | GEM-006 | 有序 text chunk | `scripts/gem_text_motion_stream.py --dry-run`；使用 tennis 预处理缓存的真实 prompt 尝试 | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 成功；唯一阻塞是本机缺少 Hugging Face `t5-3b`；有界 FIFO 和失败日志已验证 |
 | 2026-08-14 | GEM-007 | raw audio/music 输入 contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` 和 `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`、`outputs/gem_stream/music/real_attempt.pt` | 两种 60 帧真实 GEM 生成成功；audio chunk 已由 publisher 以 50 Hz 接收；实时采集、beat-aware transition、60 秒视频待完成 |
+| 2026-08-14 | GEM-007/009 | Kai Engel《Blizzard (PON I)》15 秒音乐 demo | PyAV 解码 -> `gem_audio_motion_stream.py` -> `retarget_gem_smpl.py` -> `record_zmq_policy_videos.py` | `outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_g1_bfmzero.mp4`、`outputs/gem_retarget/music_demo/videos/kai_engel_blizzard_piplus_bfmzero.mp4` | 两段均为 450 帧、30 fps、15 秒；G1 全程保持站立且重定向关节越限为 0；PiPlus reference 有效但策略在中后段跌倒，PiPlus 音乐跟踪暂不验收 |
 
 ## 阻塞和所需输入
 
