@@ -30,7 +30,7 @@ and drive, in order of implementation risk:
 
 ## Progress Ledger
 
-Last updated: 2026-08-13.
+Last updated: 2026-08-14.
 
 | ID | Status | Deliverable | Evidence / current result |
 |---|---|---|---|
@@ -46,8 +46,8 @@ Last updated: 2026-08-13.
 | GEM-003 | Done | Full G1 wrist retargeting from GEM SMPL | GMR produced 312 finite, in-limit G1 references in the policy's 29-joint order |
 | GEM-004 | In progress | Recorded-video SONIC sim2sim and comparison video | 312-frame ZMQ sim2sim and three-panel video passed visual/timing validation; quantitative tracking/fall report remains |
 | GEM-005 | Not started | Live webcam GEM-to-SONIC stream | Depends on recorded-video validation |
-| GEM-006 | In progress | Interactive text-to-motion stream | GENMO supports mixed video/text segments; the repository adapter and bounded chunk queue are being added |
-| GEM-007 | In progress | Music/audio-to-motion stream | GEM audio conditioning is available through its raw waveform encoder; file-based adapter and timing checks are being added |
+| GEM-006 | In progress | Interactive text-to-motion stream | `gem_text_motion_stream.py` generates ordered, bounded text chunks; SONIC chunk publisher added; live prompt UI remains |
+| GEM-007 | In progress | Music/audio-to-motion stream | `gem_audio_motion_stream.py` supports GEM raw 18 kHz audio or precomputed 35-D music embeddings; live capture and beat-aware transition remain |
 | GEM-008 | Done | SMPL-to-PiPlus 22-DoF retargeter | PiPlus GMR mapping produced `[519,29]` at 50 Hz with no limit violations; any4hdmi contract validation passed |
 | GEM-009 | In progress | PiPlus/G1 BFM-Zero multimodal sim2sim | 312-frame synchronized ZMQ reference/policy videos passed visual timing/stability inspection; quantitative tracking report remains |
 | GEM-010 | Not started | Hardware safety gate and limited real-robot trial | Depends on stable sim2sim metrics |
@@ -113,6 +113,23 @@ task `Done` only after its acceptance criteria and evidence are present.
   312 finite frames with global translation, root orientation, body pose, and shape.
 - GMR is cloned at `/home/sunteng/Projects/WBC_Telep/GMR`; it is an optional
   offline retarget dependency and is not required by policy inference.
+
+### Text and audio stream adapters
+
+- `scripts/gem_text_motion_stream.py` wraps the official GENMO mixed video/text
+  demo. Each prompt is a fixed 30 Hz chunk, requests are FIFO, and a full queue
+  rejects new prompts instead of reordering or dropping an accepted prompt.
+  GENMO still uses the anchor video for camera and scale context.
+  The local GENMO checkpoint does not bundle `t5-3b`; cache that Hugging Face
+  model on the workstation before a real text generation run. The adapter has
+  already reached GENMO Stage 2 with the cached tennis preprocessing.
+- `scripts/gem_audio_motion_stream.py` constructs the exact model input contract
+  for a recorded audio file (mono 18 kHz waveform, 600 samples per 30 Hz frame)
+  or an existing `[T,35]` GEM `music_embed`. It writes a normal GEM-style
+  `smpl_params.pt` for the existing retargeters.
+- `sim2real/teleop/gem_chunk_pub.py` watches completed text/audio chunk files and
+  publishes them sequentially on the existing SONIC SMPL endpoint `28702`.
+  It does not publish a partial `.tmp.pt` file and it preserves chunk order.
 
 ## Target Architecture
 
@@ -425,6 +442,27 @@ Acceptance criteria:
 - segment boundaries do not exceed configured pose/angular velocity limits;
 - prompt, seed, generation time, and generated artifact are logged.
 
+Current recorded-chunk implementation:
+
+```bash
+uv run python scripts/gem_text_motion_stream.py \
+  --anchor-video /home/sunteng/Projects/WBC_Telep/GENMO/inputs/demo/tennis.mp4 \
+  --ckpt-path /home/sunteng/Projects/WBC_Telep/GENMO/inputs/pretrained/gem_smpl.ckpt \
+  --prompt "a person walks forward" \
+  --prompt "a person dances" \
+  --output-dir outputs/gem_stream/text
+
+uv run python sim2real/teleop/gem_chunk_pub.py \
+  --input-dir outputs/gem_stream/text \
+  --bind 'tcp://*:28702'
+```
+
+The first command invokes GENMO once per accepted prompt and writes
+`chunk_000000/smpl_params.pt`, `chunk_000001/smpl_params.pt`, and so on. The
+second command streams those completed chunks to SONIC; retargeting and policy
+execution are unchanged. This is a recorded/offline chunk stream, not yet a
+per-keystroke real-time generator.
+
 ### GEM-007: Music and Audio
 
 First reproduce an official offline audio/music-conditioned sample. Then add
@@ -437,6 +475,45 @@ Acceptance criteria:
 - offline generated motion is reproducible from a saved audio file;
 - live audio buffering has bounded latency and no timestamp reversal;
 - a 60-second music-to-motion SONIC sim2sim recording is saved.
+
+Current file-based audio entry point:
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --audio /absolute/path/to/input.wav \
+  --ckpt-path /home/sunteng/Projects/WBC_Telep/GENMO/inputs/pretrained/gem_smpl.ckpt \
+  --output outputs/gem_stream/audio/smpl_params.pt
+```
+
+To publish a recorded audio sequence as ordered chunks, use a directory
+destination and then point the chunk publisher at it:
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --audio /absolute/path/to/input.wav \
+  --output-dir outputs/gem_stream/audio/chunks \
+  --chunk-frames 300
+
+uv run python sim2real/teleop/gem_chunk_pub.py \
+  --input-dir outputs/gem_stream/audio/chunks \
+  --bind 'tcp://*:28702'
+```
+
+For music conditioning, the input must be the training-time per-frame
+`[T,35]` `music_embed` rather than an MP3 by itself:
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --music-embed /absolute/path/to/music_embed.pt \
+  --output outputs/gem_stream/music/smpl_params.pt
+```
+
+Both outputs can be passed to `scripts/retarget_gem_smpl.py` or the existing
+`gem_smpl_pub.py`/`gem_bfmzero_pub.py` adapters. A live microphone frontend and
+beat-aware overlap are deliberately not claimed complete until an actual
+representative audio file has been run and timed. The raw WAV and `[T,35]`
+music paths have now completed a 60-frame real-model smoke test; the generated
+files were then accepted by `gem_chunk_pub.py` at 50 Hz.
 
 ## Phase 4: PiPlus BFM-Zero
 
@@ -491,6 +568,8 @@ evidence.
 | 2026-08-13 | GEM-004 | tennis GEM + G1 GMR reference | `record_gem_sonic_video.py`, release SMPL policy | `outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_sonic.mp4` | 312 policy frames at 30 fps; source starts at 0.000 s, policy at 0.220 s; no shape/NaN/runtime failure; visual stability passed |
 | 2026-08-13 | GEM-009 | tennis PiPlus GMR reference | `record_zmq_policy_videos.py`, PiPlus BFM-Zero | `outputs/gem_retarget/tennis/comparisons/tennis_source_piplus_reference_bfmzero.mp4` | 312 policy frames at 30 fps; source starts at 0.000 s, policy at 0.180 s; synchronized reference/policy remained upright |
 | 2026-08-13 | GEM-009 | tennis GEM -> G1 BFM-Zero robot-motion ZMQ | `record_zmq_policy_videos.py --gem-params`, `gem_bfmzero_pub.py`, BFM-Zero G1 policy | `outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4`, `outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4` | 312 frames at 30 fps; GMR qpos at 30 Hz, NPZ/ZMQ at 50 Hz; `motion_backend=zmq` received 29 joints/33 bodies; wall drift +0.371 s; visual stability passed |
+| 2026-08-14 | GEM-006 | ordered text chunks | `scripts/gem_text_motion_stream.py --dry-run`; real prompt attempt with cached tennis preprocessing | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 succeeded; inference is blocked only by missing local Hugging Face `t5-3b`; bounded FIFO and failure logging work |
+| 2026-08-14 | GEM-007 | raw audio/music input contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` and `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`, `outputs/gem_stream/music/real_attempt.pt` | both 60-frame real GEM generations succeeded; chunk publisher accepted the audio chunk at 50 Hz; live capture/beat-aware transition/60 s video remain |
 
 ## Blockers and Required Inputs
 
@@ -513,7 +592,7 @@ When resuming this project, do the following in order:
 2. Inspect `git status` and preserve unrelated user files.
 3. Finish GEM-004/GEM-009 by adding a quantitative tracking/fall report to the two synchronized recorders.
 4. Re-run the tennis artifacts above and compare the report with the saved videos.
-5. Continue GEM-006/GEM-007 using the bounded adapters below; add every real run to this log.
+5. Cache `t5-3b`, run a representative text chunk through GENMO, then retarget and record text/audio/music before adding live capture.
 6. Do not start GEM-011 until G1 and PiPlus 22-DoF BFM-Zero sim2sim acceptance is complete.
 
 ## Deferred Final Phase: GEM for the New HT Robots

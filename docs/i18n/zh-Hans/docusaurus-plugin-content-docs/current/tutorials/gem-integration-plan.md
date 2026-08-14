@@ -26,7 +26,7 @@ slug: /tutorials/gem-integration-plan
 
 ## 进度账本
 
-最后更新：2026-08-13。
+最后更新：2026-08-14。
 
 | ID | 状态 | 交付物 | 证据 / 当前结果 |
 |---|---|---|---|
@@ -42,8 +42,8 @@ slug: /tutorials/gem-integration-plan
 | GEM-003 | 已完成 | GEM SMPL 到完整 G1 腕部重定向 | GMR 已生成 312 帧、29 关节顺序正确且无越限的 G1 reference |
 | GEM-004 | 进行中 | 录制视频 SONIC sim2sim 和对比视频 | 312 帧 ZMQ sim2sim 和三栏视频已通过视觉/时序检查；还缺定量 tracking/fall 报告 |
 | GEM-005 | 未开始 | 实时 webcam GEM-to-SONIC | 依赖录制视频验证 |
-| GEM-006 | 进行中 | 交互式 text-to-motion stream | GENMO 已支持 video/text 混合片段；仓库适配器和有界 chunk queue 正在加入 |
-| GEM-007 | 进行中 | music/audio-to-motion stream | GEM raw waveform audio conditioning 可用；文件适配器和时序检查正在加入 |
+| GEM-006 | 进行中 | 交互式 text-to-motion stream | `gem_text_motion_stream.py` 已生成有序、有界 text chunk；SONIC chunk publisher 已加入；实时 prompt UI 待完成 |
+| GEM-007 | 进行中 | music/audio-to-motion stream | `gem_audio_motion_stream.py` 支持 GEM raw 18 kHz audio 或预计算 35 维 music embedding；实时采集和 beat-aware transition 待完成 |
 | GEM-008 | 已完成 | SMPL 到 PiPlus 22DoF retargeter | PiPlus GMR mapping 输出 50 Hz `[519,29]`，无关节越限，any4hdmi contract 校验通过 |
 | GEM-009 | 进行中 | PiPlus/G1 BFM-Zero 多模态 sim2sim | 312 帧同步 ZMQ reference/policy 视频通过视觉时序和稳定性检查；还缺定量 tracking 报告 |
 | GEM-010 | 未开始 | 真机安全门和有限真机试验 | 依赖稳定 sim2sim 指标 |
@@ -98,6 +98,19 @@ slug: /tutorials/gem-integration-plan
 - GEM 使用的 GVHMR body-model 小型运行时资源已安装到 `gem/utils/body_model/`。
 - 官方 tennis demo 输出位于 `/home/sunteng/Projects/WBC_Telep/GENMO/outputs/gem_runs/tennis/smpl_params.pt`，包含 312 帧有限的全局位移、根姿态、body pose 和 shape。
 - GMR clone 位于 `/home/sunteng/Projects/WBC_Telep/GMR`，它只用于离线重定向，不是 policy 在线推理依赖。
+
+### Text 和 audio stream adapter
+
+- `scripts/gem_text_motion_stream.py` 包装官方 GENMO video/text 混合 demo。每个
+  prompt 是固定 30 Hz chunk，请求按 FIFO 排列，队列满时拒绝新 prompt，不重排或
+  丢弃已经接受的 prompt。GENMO 仍然使用 anchor video 提供相机和尺度上下文。
+  本地 GENMO checkpoint 不包含 `t5-3b`；工作站执行真实 text generation 前需要先
+  缓存这个 Hugging Face 模型。adapter 已经使用 tennis 预处理缓存走通 GENMO Stage 2。
+- `scripts/gem_audio_motion_stream.py` 构造模型实际需要的输入：录制音频必须是
+  mono 18 kHz waveform（每个 30 Hz motion frame 对应 600 samples），或者已有的
+  `[T,35]` GEM `music_embed`。输出是普通 GEM `smpl_params.pt`，可复用现有 retargeter。
+- `sim2real/teleop/gem_chunk_pub.py` 监听已完成的 text/audio chunk，按顺序发布到
+  已有的 SONIC SMPL 28702 端口，不读取 `.tmp.pt`，也不打乱 chunk 顺序。
 
 ## 目标架构
 
@@ -350,11 +363,67 @@ uv run sim2real/rl_policy/tracking.py \
 
 验收条件：新 prompt 不会重排已发布动作；policy 不会遇到空 future window；片段边界不超过姿态/角速度限制；记录 prompt、seed、生成耗时和 artifact。
 
+当前录制 chunk 实现：
+
+```bash
+uv run python scripts/gem_text_motion_stream.py \
+  --anchor-video /home/sunteng/Projects/WBC_Telep/GENMO/inputs/demo/tennis.mp4 \
+  --ckpt-path /home/sunteng/Projects/WBC_Telep/GENMO/inputs/pretrained/gem_smpl.ckpt \
+  --prompt "a person walks forward" \
+  --prompt "a person dances" \
+  --output-dir outputs/gem_stream/text
+
+uv run python sim2real/teleop/gem_chunk_pub.py \
+  --input-dir outputs/gem_stream/text \
+  --bind 'tcp://*:28702'
+```
+
+第一条命令对每个接受的 prompt 调用一次 GENMO，写出
+`chunk_000000/smpl_params.pt`、`chunk_000001/smpl_params.pt`。第二条命令把已
+完成的 chunk 发送给 SONIC；retarget 和 policy 执行不变。这是录制/离线 chunk
+stream，还不是逐按键实时生成器。
+
 ### GEM-007：音乐和音频
 
 先复现官方离线 audio/music 条件样本，再增加麦克风/文件采集及与训练输入一致的特征提取。片段连接使用 beat-aware overlap，不能任意拼接独立 clip。
 
 验收条件：保存音频可复现离线动作；实时 audio buffer 延迟有界且时间戳不倒退；保存 60 秒 music-to-motion SONIC sim2sim 视频。
+
+当前文件音频入口：
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --audio /absolute/path/to/input.wav \
+  --ckpt-path /home/sunteng/Projects/WBC_Telep/GENMO/inputs/pretrained/gem_smpl.ckpt \
+  --output outputs/gem_stream/audio/smpl_params.pt
+```
+
+要把录制音频按顺序发布成 chunk，可以使用目录输出，再启动 chunk publisher：
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --audio /absolute/path/to/input.wav \
+  --output-dir outputs/gem_stream/audio/chunks \
+  --chunk-frames 300
+
+uv run python sim2real/teleop/gem_chunk_pub.py \
+  --input-dir outputs/gem_stream/audio/chunks \
+  --bind 'tcp://*:28702'
+```
+
+音乐条件输入必须是训练时的逐帧 `[T,35]` `music_embed`，单独的 MP3 不能直接作为
+GEM music condition：
+
+```bash
+uv run python scripts/gem_audio_motion_stream.py \
+  --music-embed /absolute/path/to/music_embed.pt \
+  --output outputs/gem_stream/music/smpl_params.pt
+```
+
+两个输出都可以继续交给 `scripts/retarget_gem_smpl.py`、`gem_smpl_pub.py` 或
+`gem_bfmzero_pub.py`。真实麦克风前端和 beat-aware overlap 要等代表性音频实际
+生成并完成时序测量后再标记完成。raw WAV 和 `[T,35]` music 路径已经完成 60 帧真实
+模型 smoke test，生成文件也已被 `gem_chunk_pub.py` 按 50 Hz 接收发布。
 
 ## 阶段四：PiPlus BFM-Zero
 
@@ -396,6 +465,8 @@ uv run python scripts/retarget_gem_smpl.py \
 | 2026-08-13 | GEM-004 | tennis GEM + G1 GMR reference | `record_gem_sonic_video.py`、release SMPL policy | `outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_sonic.mp4` | 312 帧/30 fps；源 0.000 秒开始，policy 0.220 秒启动；无 shape/NaN/runtime 错误，视觉稳定 |
 | 2026-08-13 | GEM-009 | tennis PiPlus GMR reference | `record_zmq_policy_videos.py`、PiPlus BFM-Zero | `outputs/gem_retarget/tennis/comparisons/tennis_source_piplus_reference_bfmzero.mp4` | 312 帧/30 fps；源 0.000 秒开始，policy 0.180 秒启动；reference/policy 同步且保持站立 |
 | 2026-08-13 | GEM-009 | tennis GEM -> G1 BFM-Zero robot-motion ZMQ | `record_zmq_policy_videos.py --gem-params`、`gem_bfmzero_pub.py`、BFM-Zero G1 policy | `outputs/gem_retarget/tennis/policy_videos/bfm_zero_g1/tennis_zmq_side_by_side.mp4`、`outputs/gem_retarget/tennis/comparisons/tennis_source_g1_reference_bfmzero.mp4` | 312 帧/30 fps；GMR qpos 30 Hz，NPZ/ZMQ 50 Hz；`motion_backend=zmq` 收到 29 joints/33 bodies；wall drift +0.371 秒；视觉稳定 |
+| 2026-08-14 | GEM-006 | 有序 text chunk | `scripts/gem_text_motion_stream.py --dry-run`；使用 tennis 预处理缓存的真实 prompt 尝试 | `outputs/gem_stream/text_real_attempt/.genmo/chunk_000000/` | Stage 1/2 成功；唯一阻塞是本机缺少 Hugging Face `t5-3b`；有界 FIFO 和失败日志已验证 |
+| 2026-08-14 | GEM-007 | raw audio/music 输入 contract | `scripts/gem_audio_motion_stream.py --audio .../gem_test_audio.wav` 和 `--music-embed .../gem_test_music_embed.npy` | `outputs/gem_stream/audio/real_attempt.pt`、`outputs/gem_stream/music/real_attempt.pt` | 两种 60 帧真实 GEM 生成成功；audio chunk 已由 publisher 以 50 Hz 接收；实时采集、beat-aware transition、60 秒视频待完成 |
 
 ## 阻塞和所需输入
 
@@ -412,7 +483,7 @@ root/body tracking 与跌倒定量指标，再实现摄像头 confidence/dropout
 2. 检查 `git status`，保留无关的用户文件。
 3. 为两个同步录制器补充定量 tracking/fall 报告，完成 GEM-004/GEM-009。
 4. 重跑上面的 tennis artifact，并将数值报告和现有视频对照。
-5. 继续使用下面的有界 adapter 推进 GEM-006/GEM-007；每个真实运行都追加到本表。
+5. 缓存 `t5-3b`，跑代表性 text chunk，再对 text/audio/music 做 retarget 和录制，然后再加入实时采集。
 6. 在 G1 和 PiPlus 22DoF BFM-Zero sim2sim 验收完成前，不要开始 GEM-011。
 
 ## 延后最终阶段：新 HT 机器人的 GEM
